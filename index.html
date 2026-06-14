@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Infinite Panel de Pon</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d0d1a;
+    color: #ccc;
+    font-family: 'Courier New', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 15px;
+    user-select: none;
+  }
+  h1 { font-size: 20px; margin-bottom: 8px; color: #fff; letter-spacing: 2px; }
+  #hud {
+    display: flex;
+    gap: 20px;
+    font-size: 14px;
+    margin-bottom: 8px;
+    background: #1a1a2e;
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid #2a2a4e;
+  }
+  #hud b { color: #fff; font-size: 16px; }
+  #gameWrapper {
+    position: relative;
+    border: 2px solid #333;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 0 30px rgba(0,100,255,0.1);
+  }
+  canvas { display: block; background: #080814; }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    z-index: 10;
+  }
+  #overlay h2 { font-size: 32px; color: #ff4444; letter-spacing: 3px; }
+  #overlay p { font-size: 18px; color: #fff; }
+  #overlay button {
+    margin-top: 8px;
+    padding: 12px 40px;
+    font-size: 16px;
+    font-family: inherit;
+    background: #3b82f6;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+    letter-spacing: 1px;
+  }
+  #overlay button:hover { background: #60a5fa; }
+  .hidden { display: none !important; }
+  #controls { margin-top: 8px; font-size: 12px; color: #555; }
+</style>
+</head>
+<body>
+  <h1>INFINITE PANEL DE PON</h1>
+  <div id="hud">
+    <span>SCORE <b id="score">0</b></span>
+    <span>CHAIN <b id="chain">0</b></span>
+    <span>SPEED <b id="speed">1</b></span>
+    <span>GRID <b id="gridsize">6&times;12</b></span>
+  </div>
+  <div id="gameWrapper">
+    <canvas id="game"></canvas>
+    <div id="overlay" class="hidden">
+      <h2>GAME OVER</h2>
+      <p>Final Score: <span id="finalScore">0</span></p>
+      <button id="restart">RESTART</button>
+    </div>
+  </div>
+  <div id="controls">Arrow Keys: Move &nbsp;|&nbsp; Z / Space: Swap &nbsp;|&nbsp; X: Raise Row</div>
+
+<script>
+"use strict";
+
+// ===================== CONSTANTS =====================
+let  TILE_SIZE = 40;   // dynamic — recomputed in resizeCanvas()
+const CANVAS_W = 400;  // fixed canvas dimensions
+const CANVAS_H = 800;
+const COLORS = [
+  { name:'R', main:'#e8434c', light:'#ff6b73', dark:'#9a1b22' },
+  { name:'B', main:'#3b82f6', light:'#60a5fa', dark:'#1e40a8' },
+  { name:'G', main:'#22c55e', light:'#4ade80', dark:'#15803d' },
+  { name:'Y', main:'#facc15', light:'#fde047', dark:'#a16207' },
+  { name:'P', main:'#a855f7', light:'#c084fc', dark:'#6b21a8' },
+];
+const THRESHOLDS = [
+  { score:0,     cols:6,  rows:12 },
+  { score:1000,  cols:7,  rows:13 },
+  { score:2500,  cols:8,  rows:14 },
+  { score:5000,  cols:9,  rows:15 },
+  { score:10000, cols:10, rows:16 },
+];
+const FLASH_DURATION  = 0.40;   // seconds – (legacy, kept for reference)
+const CLEAR_BASE_DELAY= 0.48;   // seconds – initial flash before first tile vanishes
+const CLEAR_STAGGER   = 0.24;   // seconds – delay between consecutive tile vanishings
+const FALL_SPEED      = 550;    // px / second
+const RISE_BASE_SPEED = 5;      // px / second
+const RISE_INCREMENT  = 1.25;   // px / second per speed-level
+const RISE_LEVEL_STEP = 500;    // score points per speed-level
+const MAX_RISE_LEVEL  = 40;
+const SWAP_COOLDOWN   = 0.12;   // seconds — minimum delay between swaps
+
+// roundRect polyfill for older browsers
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
+    r = Math.min(r, w/2, h/2);
+    this.beginPath();
+    this.moveTo(x+r,y);
+    this.arcTo(x+w,y,x+w,y+h,r);
+    this.arcTo(x+w,y+h,x,y+h,r);
+    this.arcTo(x,y+h,x,y,r);
+    this.arcTo(x,y,x+w,y,r);
+    this.closePath();
+  };
+}
+
+// ===================== STATE =====================
+let canvas, ctx;
+let cols, rows;
+let grid;            // grid[col][row]  → tile-object or null
+let nextRow;         // nextRow[col]    → tile-object (hidden incoming row)
+let cursorCol, cursorRow;
+let score, chainLevel, riseSpeedLevel;
+let riseProgress;            // 0 … TILE_SIZE
+let state;                   // 'playing' | 'clearing' | 'falling' | 'gameover'
+let stateTimer;
+let lastTime;
+let needsMatchCheck;
+let manualRaise;             // true while an X-key fast raise is in progress
+let swapCooldown;            // seconds remaining before next swap allowed
+let currentThresholdIdx;
+let expandMsgTimer;
+let chainMsgTimer;
+let expandAnimT;             // 0-1 expansion visual transition
+let gridOffsetY;             // vertical centering offset for grid within fixed canvas
+
+// ===================== TILE FACTORY =====================
+function makeTile(color){ return { color, vy:0, clearing:false }; }
+
+// ===================== INIT / RESET =====================
+function init(){
+  canvas = document.getElementById('game');
+  ctx = canvas.getContext('2d');
+  resetGame();
+  setupInput();
+  requestAnimationFrame(loop);
+}
+
+function resetGame(){
+  cols = 6; rows = 12;
+  score = 0; chainLevel = 0; riseSpeedLevel = 0;
+  riseProgress = 0; state = 'playing'; stateTimer = 0;
+  needsMatchCheck = false; manualRaise = false; swapCooldown = 0; currentThresholdIdx = 0;
+  expandMsgTimer = 0; chainMsgTimer = 0; expandAnimT = 0;
+  lastTime = 0;
+  cursorCol = Math.floor(cols/2)-1;
+  cursorRow = Math.floor(rows/2);
+  generateBoard();
+  resizeCanvas();
+  document.getElementById('overlay').classList.add('hidden');
+}
+
+function resizeCanvas(){
+  canvas.width  = CANVAS_W;
+  canvas.height = CANVAS_H;
+  TILE_SIZE = Math.min(CANVAS_W / cols, CANVAS_H / rows);
+  gridOffsetY = (CANVAS_H - rows * TILE_SIZE) / 2;
+}
+
+// ===================== BOARD GENERATION =====================
+function generateBoard(){
+  grid = [];
+  for (let c=0;c<cols;c++) grid.push(new Array(rows).fill(null));
+
+  let startRow = Math.ceil(rows*0.42);          // bottom ~58 % filled
+  for (let c=0;c<cols;c++){
+    for (let r=startRow;r<rows;r++){
+      let avail = [0,1,2,3,4];
+      if (c>=2 && grid[c-1][r] && grid[c-2][r] &&
+          grid[c-1][r].color===grid[c-2][r].color)
+        avail = avail.filter(x=>x!==grid[c-1][r].color);
+      if (r>=2 && grid[c][r-1] && grid[c][r-2] &&
+          grid[c][r-1].color===grid[c][r-2].color)
+        avail = avail.filter(x=>x!==grid[c][r-1].color);
+      grid[c][r] = makeTile(avail[Math.floor(Math.random()*avail.length)]);
+    }
+  }
+  nextRow = [];
+  for (let c=0;c<cols;c++)
+    nextRow.push(makeTile(Math.floor(Math.random()*COLORS.length)));
+}
+
+// ===================== INPUT =====================
+function setupInput(){
+  document.addEventListener('keydown', e=>{
+    if (state==='gameover') return;
+    // allow cursor movement and swapping during playing, clearing, and falling
+    switch(e.key){
+      case 'ArrowLeft':  e.preventDefault(); if(cursorCol>0) cursorCol--; break;
+      case 'ArrowRight': e.preventDefault(); if(cursorCol<cols-2) cursorCol++; break;
+      case 'ArrowUp':    e.preventDefault(); if(cursorRow>0) cursorRow--; break;
+      case 'ArrowDown':  e.preventDefault(); if(cursorRow<rows-1) cursorRow++; break;
+      case 'z': case 'Z': case ' ': e.preventDefault(); doSwap(); break;
+      case 'x': case 'X':
+        e.preventDefault();
+        if(state==='playing' && !manualRaise) manualRaise=true;
+        break;
+    }
+  });
+  document.getElementById('restart').addEventListener('click', resetGame);
+}
+
+function doSwap(){
+  if(swapCooldown>0) return;
+  let r=cursorRow, c=cursorCol;
+  // don't swap if either tile is mid-clear or already cleared (ghost)
+  if(grid[c][r] && (grid[c][r].clearing||grid[c][r].cleared)) return;
+  if(grid[c+1][r] && (grid[c+1][r].clearing||grid[c+1][r].cleared)) return;
+  let tmp = grid[c][r];
+  grid[c][r] = grid[c+1][r];
+  grid[c+1][r] = tmp;
+  needsMatchCheck = true;
+  swapCooldown = SWAP_COOLDOWN;
+}
+
+// ===================== MATCH DETECTION =====================
+function findMatches(){
+  let matched=[];
+  for(let c=0;c<cols;c++) matched.push(new Array(rows).fill(false));
+
+  // horizontal
+  for(let r=0;r<rows;r++){
+    let c=0;
+    while(c<cols){
+      if(!grid[c][r]||grid[c][r].clearing||grid[c][r].cleared){c++;continue;}
+      let clr=grid[c][r].color, end=c+1;
+      while(end<cols && grid[end][r] && !grid[end][r].clearing && !grid[end][r].cleared &&
+            grid[end][r].color===clr) end++;
+      if(end-c>=3) for(let i=c;i<end;i++) matched[i][r]=true;
+      c=end;
+    }
+  }
+  // vertical
+  for(let c=0;c<cols;c++){
+    let r=0;
+    while(r<rows){
+      if(!grid[c][r]||grid[c][r].clearing||grid[c][r].cleared){r++;continue;}
+      let clr=grid[c][r].color, end=r+1;
+      while(end<rows && grid[c][end] && !grid[c][end].clearing && !grid[c][end].cleared &&
+            grid[c][end].color===clr) end++;
+      if(end-r>=3) for(let i=r;i<end;i++) matched[c][i]=true;
+      r=end;
+    }
+  }
+  let count=0;
+  for(let c=0;c<cols;c++)for(let r=0;r<rows;r++) if(matched[c][r]) count++;
+  return { matched, count };
+}
+
+// ===================== CLEARING / SCORING =====================
+function startClearing(result){
+  chainLevel++;
+  let tiles=result.count;
+  let baseScore  = tiles*10;
+  let chainMult  = chainLevel;
+  let comboBonus = Math.max(0,tiles-3)*20;
+  score += baseScore*chainMult + comboBonus;
+
+  // assign staggered clear timers so tiles vanish one at a time
+  let idx=0;
+  for(let c=0;c<cols;c++)
+    for(let r=rows-1;r>=0;r--)
+      if(result.matched[c][r]){
+        grid[c][r].clearing=true;
+        grid[c][r].clearTimer=CLEAR_BASE_DELAY+idx*CLEAR_STAGGER;
+        idx++;
+      }
+
+  state='clearing';
+  if(chainLevel>=2) chainMsgTimer=1.6;
+}
+
+function removeMatched(){
+  for(let c=0;c<cols;c++)
+    for(let r=0;r<rows;r++)
+      if(grid[c][r]&&grid[c][r].clearing) grid[c][r]=null;
+}
+
+// ===================== GRAVITY =====================
+function applyGravity(){
+  for(let c=0;c<cols;c++){
+    let writeRow=rows-1;
+    for(let r=rows-1;r>=0;r--){
+      if(grid[c][r]){
+        if(grid[c][r].clearing || grid[c][r].cleared){
+          // clearing/ghost tiles are fixed pillars — don't move them
+          writeRow = r - 1;
+        } else {
+          if(writeRow!==r){
+            grid[c][writeRow]=grid[c][r];
+            grid[c][writeRow].vy += (writeRow-r)*TILE_SIZE;
+            grid[c][r]=null;
+          }
+          writeRow--;
+        }
+      }
+    }
+  }
+}
+
+function allSettled(){
+  for(let c=0;c<cols;c++)
+    for(let r=0;r<rows;r++)
+      if(grid[c][r]&&grid[c][r].vy>0) return false;
+  return true;
+}
+
+// returns true if any non-clearing tile has an empty space below it in the same column
+// clearing/cleared tiles act as barriers — gaps below them are unreachable from above
+function hasFloating(){
+  for(let c=0;c<cols;c++){
+    let foundNull=false;
+    for(let r=rows-1;r>=0;r--){
+      if(!grid[c][r]) foundNull=true;
+      else {
+        if(grid[c][r].clearing || grid[c][r].cleared){
+          foundNull=false; // barrier tile — gap below is unreachable
+        } else if(foundNull) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ===================== RISE =====================
+function getRiseSpeed(){
+  return RISE_BASE_SPEED + Math.min(riseSpeedLevel,MAX_RISE_LEVEL)*RISE_INCREMENT;
+}
+
+function handleRise(dt){
+  let speed = manualRaise ? TILE_SIZE / 0.1 : getRiseSpeed();
+  riseProgress += speed*dt;
+  if(riseProgress>=TILE_SIZE){
+    // shift up
+    for(let c=0;c<cols;c++){
+      for(let r=0;r<rows-1;r++) grid[c][r]=grid[c][r+1];
+      grid[c][rows-1]=nextRow[c];
+      nextRow[c]=makeTile(Math.floor(Math.random()*COLORS.length));
+    }
+    riseProgress-=TILE_SIZE;
+    manualRaise=false;           // fast-raise complete
+    // game-over check: AFTER shift, if any tile now sits in top row
+    for(let c=0;c<cols;c++){
+      if(grid[c][0]){ state='gameover'; showGameOver(); return; }
+    }
+    needsMatchCheck=true;
+    // keep cursor locked to the same visual row as blocks rise
+    if(cursorRow>0) cursorRow--;
+  }
+}
+
+// ===================== EXPANSION =====================
+function checkExpansion(){
+  for(let i=THRESHOLDS.length-1;i>=0;i--){
+    if(score>=THRESHOLDS[i].score && i>currentThresholdIdx){
+      expandGrid(THRESHOLDS[i].cols, THRESHOLDS[i].rows);
+      currentThresholdIdx=i;
+      expandMsgTimer=2.0;
+      expandAnimT=0.0001;
+      break;
+    }
+  }
+}
+
+function expandGrid(newCols,newRows){
+  let oldCols=cols, leftAdd=Math.floor((newCols-oldCols)/2);
+
+  let ng=[];
+  for(let c=0;c<newCols;c++) ng.push(new Array(newRows).fill(null));
+  for(let c=0;c<oldCols;c++)
+    for(let r=0;r<rows;r++)
+      if(grid[c][r]) ng[c+leftAdd][r]=grid[c][r];
+
+  grid=ng; cols=newCols; rows=newRows;
+
+  cursorCol+=leftAdd;
+  if(cursorCol>cols-2) cursorCol=cols-2;
+  if(cursorCol<0) cursorCol=0;
+  if(cursorRow>rows-1) cursorRow=rows-1;
+
+  let nr=new Array(newCols).fill(null);
+  for(let c=0;c<oldCols;c++) nr[c+leftAdd]=nextRow[c];
+  for(let c=0;c<newCols;c++)
+    if(!nr[c]) nr[c]=makeTile(Math.floor(Math.random()*COLORS.length));
+  nextRow=nr;
+
+  let oldTileSize = TILE_SIZE;
+  resizeCanvas();
+  let tscale = TILE_SIZE / oldTileSize;
+  if(tscale !== 1){
+    for(let c=0;c<cols;c++)
+      for(let r=0;r<rows;r++)
+        if(grid[c][r] && grid[c][r].vy) grid[c][r].vy *= tscale;
+    riseProgress *= tscale;
+  }
+}
+
+// ===================== ANIMATIONS =====================
+function updateAnimations(dt){
+  for(let c=0;c<cols;c++)
+    for(let r=0;r<rows;r++)
+      if(grid[c][r]&&grid[c][r].vy>0){
+        grid[c][r].vy-=FALL_SPEED*dt;
+        if(grid[c][r].vy<0) grid[c][r].vy=0;
+      }
+}
+
+// ===================== GAME OVER =====================
+function showGameOver(){
+  document.getElementById('overlay').classList.remove('hidden');
+  document.getElementById('finalScore').textContent=score;
+}
+
+// ===================== UPDATE =====================
+function update(dt){
+  updateAnimations(dt);
+  if(swapCooldown>0) swapCooldown-=dt;
+  if(expandMsgTimer>0) expandMsgTimer-=dt;
+  if(chainMsgTimer>0)  chainMsgTimer-=dt;
+  if(expandAnimT>0 && expandAnimT<1) expandAnimT=Math.min(1,expandAnimT+dt*3);
+
+  riseSpeedLevel=Math.floor(score/RISE_LEVEL_STEP);
+
+  if(state==='playing'){
+    handleRise(dt);
+    if(state!=='playing') { /* game over inside handleRise */ }
+    else if(needsMatchCheck){
+      needsMatchCheck=false;
+      let res=findMatches();
+      if(res.count>=3) startClearing(res);
+      else if(hasFloating()){ applyGravity(); state='falling'; }
+    }
+  } else if(state==='clearing'){
+    // decrement per-tile clear timers; mark tiles as cleared when expired
+    for(let c=0;c<cols;c++)
+      for(let r=0;r<rows;r++)
+        if(grid[c][r]&&grid[c][r].clearing){
+          grid[c][r].clearTimer-=dt;
+          if(grid[c][r].clearTimer<=0){
+            grid[c][r].cleared=true;
+            grid[c][r].clearing=false;
+          }
+        }
+
+    // process new matches immediately (e.g. from swaps during clearing)
+    if(needsMatchCheck){
+      needsMatchCheck=false;
+      let res=findMatches();
+      if(res.count>=3) startClearing(res);
+    }
+
+    // allow non-match tiles to fall into gaps while clearing continues
+    if(hasFloating()){ applyGravity(); }
+
+    // check if any tiles are still clearing
+    let anyClearing=false;
+    outer:
+    for(let c=0;c<cols;c++){
+      for(let r=0;r<rows;r++){
+        if(grid[c][r]&&grid[c][r].clearing){anyClearing=true;break outer;}
+      }
+    }
+
+    if(!anyClearing){
+      // all clear sequences finished — remove ghost tiles and apply gravity
+      for(let c=0;c<cols;c++)
+        for(let r=0;r<rows;r++)
+          if(grid[c][r]&&grid[c][r].cleared) grid[c][r]=null;
+      applyGravity();
+      state='falling';
+    }
+  } else if(state==='falling'){
+    if(allSettled()){
+      let res=findMatches();
+      if(res.count>=3) startClearing(res);
+      else { chainLevel=0; state='playing'; }
+    }
+  }
+  checkExpansion();
+  // safety: if we ever leave 'playing', cancel any pending fast-raise
+  if(state!=='playing') manualRaise=false;
+}
+
+// ===================== RENDERING =====================
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // ---- grid region (translated for vertical centering) ----
+  ctx.save();
+  ctx.translate(0, gridOffsetY);
+
+  // danger zone (top 2 rows)
+  let danger=false;
+  for(let c=0;c<cols;c++){
+    if(grid[c][1]){danger=true;break;}
+  }
+  if(danger){
+    let pulse=0.06+Math.sin(Date.now()/250)*0.04;
+    ctx.fillStyle='rgba(255,30,30,'+pulse+')';
+    ctx.fillRect(0,0,cols*TILE_SIZE,TILE_SIZE*2);
+  }
+
+  // grid lines
+  ctx.strokeStyle='rgba(255,255,255,0.035)';
+  ctx.lineWidth=1;
+  for(let c=0;c<=cols;c++){
+    ctx.beginPath(); ctx.moveTo(c*TILE_SIZE,0);
+    ctx.lineTo(c*TILE_SIZE,rows*TILE_SIZE); ctx.stroke();
+  }
+  for(let r=0;r<=rows;r++){
+    ctx.beginPath(); ctx.moveTo(0,r*TILE_SIZE);
+    ctx.lineTo(cols*TILE_SIZE,r*TILE_SIZE); ctx.stroke();
+  }
+
+  // tiles
+  for(let c=0;c<cols;c++)
+    for(let r=0;r<rows;r++)
+      if(grid[c][r]){
+        let x=c*TILE_SIZE;
+        let y=r*TILE_SIZE-riseProgress-grid[c][r].vy;
+        drawTile(grid[c][r],x,y);
+      }
+
+  // nextRow (incoming row rising from bottom) – heavily dimmed until fully on board
+  let riseT = TILE_SIZE > 0 ? riseProgress / TILE_SIZE : 0;
+  let rowAlpha = 0.10 + 0.90 * riseT;
+  ctx.save();
+  ctx.globalAlpha = rowAlpha;
+  for(let c=0;c<cols;c++)
+    if(nextRow[c]){
+      let x=c*TILE_SIZE;
+      let y=rows*TILE_SIZE-riseProgress;
+      drawTile(nextRow[c],x,y);
+    }
+  ctx.restore();
+
+  ctx.restore(); // end grid translate
+
+  // expansion flash (full canvas, not translated)
+  if(expandAnimT>0 && expandAnimT<1){
+    ctx.fillStyle='rgba(100,200,255,'+(1-expandAnimT)*0.3+')';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+  }
+
+  // cursor (translated)
+  if(state==='playing'||state==='clearing'||state==='falling'){
+    ctx.save();
+    ctx.translate(0, gridOffsetY);
+    drawCursor();
+    ctx.restore();
+  }
+
+  // chain message (on canvas)
+  if(chainMsgTimer>0 && chainLevel>=2){
+    let a=Math.min(1,chainMsgTimer);
+    ctx.save();
+    ctx.font='bold 30px "Courier New",monospace';
+    ctx.textAlign='center';
+    ctx.textBaseline='top';
+    ctx.fillStyle='rgba(0,0,0,'+a*0.6+')';
+    ctx.fillText('CHAIN x'+chainLevel+'!',canvas.width/2+2,gridOffsetY+12);
+    ctx.fillStyle='rgba(255,220,50,'+a+')';
+    ctx.fillText('CHAIN x'+chainLevel+'!',canvas.width/2,gridOffsetY+10);
+    ctx.restore();
+  }
+
+  // expand message (on canvas)
+  if(expandMsgTimer>0){
+    let a=1;
+    if(expandMsgTimer>1.7) a=(2.0-expandMsgTimer)/0.3;
+    if(expandMsgTimer<0.4) a=expandMsgTimer/0.4;
+    a=Math.max(0,Math.min(1,a));
+    let mw=230, mh=46;
+    let mx=(canvas.width-mw)/2, my=gridOffsetY+canvas.height*0.28;
+    ctx.save();
+    ctx.fillStyle='rgba(255,215,0,'+a*0.92+')';
+    ctx.beginPath(); ctx.roundRect(mx,my,mw,mh,10); ctx.fill();
+    ctx.fillStyle='rgba(0,0,0,'+a+')';
+    ctx.font='bold 20px "Courier New",monospace';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('Grid Expanded!',canvas.width/2,my+mh/2);
+    ctx.restore();
+  }
+}
+
+function drawTile(tile,x,y){
+  if(tile.cleared) return; // ghost tile — invisible but blocks space
+  let col=COLORS[tile.color];
+  let s=TILE_SIZE, p=Math.max(2,Math.round(s*0.075));
+  let rad=Math.max(3,Math.round(s*0.15));
+  let m=col.main, l=col.light;
+
+  if(tile.clearing){
+    if(Math.floor(tile.clearTimer*16)%2===0){ m='#ffffff'; l='#ffffff'; }
+  }
+
+  let g=ctx.createLinearGradient(x,y,x,y+s);
+  g.addColorStop(0,l); g.addColorStop(0.55,m); g.addColorStop(1,col.dark);
+  ctx.fillStyle=g;
+  ctx.beginPath(); ctx.roundRect(x+p,y+p,s-p*2,s-p*2,rad); ctx.fill();
+
+  // glossy top
+  ctx.fillStyle='rgba(255,255,255,0.18)';
+  ctx.beginPath(); ctx.roundRect(x+p+2,y+p+2,s-p*2-4,(s-p*2)/2.8,Math.max(2,rad*0.6)); ctx.fill();
+
+  // border
+  ctx.strokeStyle='rgba(0,0,0,0.35)';
+  ctx.lineWidth=1;
+  ctx.beginPath(); ctx.roundRect(x+p,y+p,s-p*2,s-p*2,rad); ctx.stroke();
+
+  // colourblind letter
+  ctx.fillStyle='rgba(255,255,255,0.85)';
+  ctx.font='bold '+Math.round(s*0.375)+'px "Courier New",monospace';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(col.name,x+s/2,y+s/2+1);
+}
+
+function drawCursor(){
+  let x=cursorCol*TILE_SIZE;
+  let y=cursorRow*TILE_SIZE-riseProgress;
+  let w=TILE_SIZE*2, h=TILE_SIZE;
+  let rad=Math.max(3,Math.round(TILE_SIZE*0.125));
+
+  let pulse=Math.sin(Date.now()/180)*0.25+0.75;
+  ctx.strokeStyle='rgba(253,224,71,'+(pulse*0.35)+')';
+  ctx.lineWidth=7;
+  ctx.beginPath(); ctx.roundRect(x+1,y+1,w-2,h-2,rad); ctx.stroke();
+
+  ctx.strokeStyle='#fde047';
+  ctx.lineWidth=3;
+  ctx.beginPath(); ctx.roundRect(x+1,y+1,w-2,h-2,rad); ctx.stroke();
+}
+
+// ===================== HUD =====================
+function updateHUD(){
+  document.getElementById('score').textContent=score;
+  document.getElementById('chain').textContent=chainLevel;
+  document.getElementById('speed').textContent=riseSpeedLevel+1;
+  document.getElementById('gridsize').textContent=cols+'\u00d7'+rows;
+}
+
+// ===================== MAIN LOOP =====================
+function loop(ts){
+  if(!lastTime) lastTime=ts;
+  let dt=(ts-lastTime)/1000;
+  lastTime=ts;
+  if(dt>0.1) dt=0.1;
+
+  if(state!=='gameover') update(dt);
+  render();
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+
+// ===================== START =====================
+init();
+</script>
+</body>
+</html>
