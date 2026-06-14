@@ -29,6 +29,8 @@
     border: 1px solid #2a2a4e;
   }
   #hud b { color: #fff; font-size: 16px; }
+  #score { display: inline-block; transition: transform .18s cubic-bezier(.34,1.56,.64,1), color .18s; }
+  #score.pop { transform: scale(1.45); color: #ffd700; }
   #gameWrapper {
     position: relative;
     border: 2px solid #333;
@@ -65,6 +67,33 @@
   }
   #overlay button:hover { background: #60a5fa; }
   .hidden { display: none !important; }
+  #playArea { display: flex; gap: 14px; align-items: flex-start; }
+  #sidePanel {
+    background: #1a1a2e;
+    border: 1px solid #2a2a4e;
+    border-radius: 6px;
+    padding: 12px 14px;
+    width: 180px;
+    flex-shrink: 0;
+  }
+  #sidePanel h3 {
+    font-size: 13px;
+    color: #888;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid #2a2a4e;
+    padding-bottom: 8px;
+  }
+  .opt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #ccc;
+    cursor: pointer;
+    padding: 6px 0;
+  }
+  .opt input { cursor: pointer; width: 16px; height: 16px; accent-color: #3b82f6; }
   #controls { margin-top: 8px; font-size: 12px; color: #555; }
 </style>
 </head>
@@ -76,12 +105,18 @@
     <span>SPEED <b id="speed">1</b></span>
     <span>GRID <b id="gridsize">6&times;12</b></span>
   </div>
-  <div id="gameWrapper">
-    <canvas id="game"></canvas>
-    <div id="overlay" class="hidden">
-      <h2>GAME OVER</h2>
-      <p>Final Score: <span id="finalScore">0</span></p>
-      <button id="restart">RESTART</button>
+  <div id="playArea">
+    <div id="gameWrapper">
+      <canvas id="game"></canvas>
+      <div id="overlay" class="hidden">
+        <h2>GAME OVER</h2>
+        <p>Final Score: <span id="finalScore">0</span></p>
+        <button id="restart">RESTART</button>
+      </div>
+    </div>
+    <div id="sidePanel">
+      <h3>OPTIONS</h3>
+      <label class="opt"><input type="checkbox" id="optSpeedLock"> Lock Speed</label>
     </div>
   </div>
   <div id="controls">Arrow Keys: Move &nbsp;|&nbsp; Z / Space: Swap &nbsp;|&nbsp; X: Raise Row</div>
@@ -89,16 +124,24 @@
 <script>
 "use strict";
 
-// ===================== CONSTANTS =====================
-let  TILE_SIZE = 40;   // dynamic — recomputed in resizeCanvas()
-const CANVAS_W = 400;  // fixed canvas dimensions
+// ====================================================================
+//  ENGINE TIMING
+//  Every gameplay constraint is expressed as an ABSOLUTE number of
+//  milliseconds and driven by a high-precision delta-time accumulator
+//  sourced from performance.now(). Nothing is frame-counted, so the
+//  game behaves identically on 60 Hz / 144 Hz / 240 Hz displays.
+// ====================================================================
+let  TILE_SIZE = 40;            // dynamic — recomputed in resizeCanvas()
+const CANVAS_W = 400;           // fixed canvas dimensions
 const CANVAS_H = 800;
+const OFFBOARD_ROW_ALPHA = 0.12; // constant dim for the rising off-board row
 const COLORS = [
-  { name:'R', main:'#e8434c', light:'#ff6b73', dark:'#9a1b22' },
-  { name:'B', main:'#3b82f6', light:'#60a5fa', dark:'#1e40a8' },
-  { name:'G', main:'#22c55e', light:'#4ade80', dark:'#15803d' },
-  { name:'Y', main:'#facc15', light:'#fde047', dark:'#a16207' },
-  { name:'P', main:'#a855f7', light:'#c084fc', dark:'#6b21a8' },
+  { symbol:'heart',    main:'#e8434c', light:'#ff6b73', dark:'#9a1b22' }, // Red
+  { symbol:'star',     main:'#facc15', light:'#fde047', dark:'#a16207' }, // Yellow
+  { symbol:'diamond',  main:'#3b82f6', light:'#60a5fa', dark:'#1e40a8' }, // Blue
+  { symbol:'triangle', main:'#a855f7', light:'#c084fc', dark:'#6b21a8' }, // Purple
+  { symbol:'circle',   main:'#22c55e', light:'#4ade80', dark:'#15803d' }, // Green
+  { symbol:'square',   main:'#06b6d4', light:'#22d3ee', dark:'#0e7490' }, // Cyan
 ];
 const THRESHOLDS = [
   { score:0,     cols:6,  rows:12 },
@@ -107,15 +150,45 @@ const THRESHOLDS = [
   { score:5000,  cols:9,  rows:15 },
   { score:10000, cols:10, rows:16 },
 ];
-const FLASH_DURATION  = 0.40;   // seconds – (legacy, kept for reference)
-const CLEAR_BASE_DELAY= 0.48;   // seconds – initial flash before first tile vanishes
-const CLEAR_STAGGER   = 0.24;   // seconds – delay between consecutive tile vanishings
-const FALL_SPEED      = 550;    // px / second
-const RISE_BASE_SPEED = 5;      // px / second
-const RISE_INCREMENT  = 1.25;   // px / second per speed-level
-const RISE_LEVEL_STEP = 500;    // score points per speed-level
+
+// ---- absolute-millisecond engine constants ----
+const MS = {
+  // 1. Cursor & input mechanics
+  CURSOR_SHIFT:      16.67,   // single-press traversal of one grid slot
+  DAS_INITIAL:       200.00,  // continuous hold before auto-shift activates
+  DAS_REPEAT:        50.00,   // auto-shift interval once DAS is active
+  SWAP_INPUT_BUFFER: 16.67,   // directional inputs buffered this long after a swap
+
+  // 2. Panel swap physics
+  SWAP_DURATION:     66.67,   // full swap animation duration
+  SWAP_INTERRUPT:    50.00,   // earliest point a moving panel may be swapped again (mid-air)
+  FALL_PER_ROW:      16.67,   // time for a panel to drop exactly one row
+
+  // 3. Match processing & clear lifecycle
+  MATCH_CHECK_DELAY: 150.00,  // grid pause immediately on alignment detection
+  FLASH:             266.67,  // simultaneous white flash of all matched panels
+  WINCE:             166.67,  // wince / face phase
+  POP_PER_PANEL:     66.67,   // sequential pop, one panel at a time (L→R, T→B)
+
+  // 4. Hover, gravity & chain timing
+  HOVER_BASE:        400.00,  // baseline hover before gravity applies
+  HOVER_L1:          466.67,  // hover at Speed Level 1
+  HOVER_L10:         233.33,  // hover at Speed Level 10
+  HOVER_MAX:         100.00,  // hover at Max Speed Level
+  CHAIN_FREEZE_2:    733.33,  // board freeze on a 2× chain
+  CHAIN_FREEZE_5:    1266.67, // board freeze on a 5× chain
+
+  // 5. Manual stack raising
+  MANUAL_RAISE:      166.67,  // scroll animation + full swap lockout window
+};
+const ROWS_PER_SEC = 1000 / MS.FALL_PER_ROW;        // 60 rows / second
+function fallSpeedPxPerSec(){ return TILE_SIZE * ROWS_PER_SEC; }
+
+// board rise is decoupled from refresh rate too (px/s)
+const RISE_BASE_SPEED = 5;       // px / second
+const RISE_INCREMENT  = 1.25;    // px / second per speed-level
+const RISE_LEVEL_STEP = 500;     // score points per speed-level
 const MAX_RISE_LEVEL  = 40;
-const SWAP_COOLDOWN   = 0.12;   // seconds — minimum delay between swaps
 
 // roundRect polyfill for older browsers
 if (!CanvasRenderingContext2D.prototype.roundRect) {
@@ -137,22 +210,101 @@ let cols, rows;
 let grid;            // grid[col][row]  → tile-object or null
 let nextRow;         // nextRow[col]    → tile-object (hidden incoming row)
 let cursorCol, cursorRow;
-let score, chainLevel, riseSpeedLevel;
+let cursorFromCol, cursorFromRow;   // visual interpolation source
+let cursorShiftMs;                  // 0..MS.CURSOR_SHIFT visual cursor traversal
+let score, currentChain, riseSpeedLevel;
+let speedLocked = false;      // option: freeze rise speed at its current level
+let speedLockLevel = 0;       // captured level when the lock is engaged
 let riseProgress;            // 0 … TILE_SIZE
-let state;                   // 'playing' | 'clearing' | 'falling' | 'gameover'
-let stateTimer;
+let state;                   // see STATE_MACHINE below
+let phaseTimer;              // ms accumulated/remaining in current phase
 let lastTime;
 let needsMatchCheck;
-let manualRaise;             // true while an X-key fast raise is in progress
-let swapCooldown;            // seconds remaining before next swap allowed
 let currentThresholdIdx;
-let expandMsgTimer;
-let chainMsgTimer;
+let expandMsgTimer, chainMsgTimer;
 let expandAnimT;             // 0-1 expansion visual transition
 let gridOffsetY;             // vertical centering offset for grid within fixed canvas
 
+// input
+let keys;                    // {left,right,up,down}
+let dasDir;                  // currently DAS-tracked direction | null
+let dasHoldMs;               // continuous hold time toward DAS_INITIAL
+let dasActive;               // auto-shift armed
+let dasRepeatMs;             // time toward next DAS_REPEAT shift
+let swapBufferMs;            // directional input lockout after a swap
+let bufferedDir;             // direction queued during the swap-buffer window
+
+// swap animation
+let activeSwap;              // { t } elapsed ms, or null
+// match lifecycle data
+let matchList;               // ordered [{c,r}] top→bottom, left→right
+let popCount;                // how many panels have popped so far
+// manual raise
+let manualRaise;             // true while an X-key fast raise is in progress
+let raiseLockMs;             // swap lockout remaining during a manual raise
+
+// --------------------------------------------------------------------
+//  STATE MACHINE
+//   'playing'      normal play: rise + input + swap
+//   'chainfreeze'  board frozen for skill-chain inputs (currentChain>=2)
+//   'matchdelay'   MATCH_CHECK_DELAY pause on alignment
+//   'flash'        FLASH phase — all matched panels white
+//   'wince'        WINCE phase — wince face
+//   'popping'      sequential POP_PER_PANEL per panel
+//   'hover'        unsupported panels hover HOVER delay then fall
+//   'falling'      gravity; on settle → match(chain) or back to playing
+//   'gameover'
+// --------------------------------------------------------------------
+
 // ===================== TILE FACTORY =====================
-function makeTile(color){ return { color, vy:0, clearing:false }; }
+function makeTile(color){
+  return { color, vy:0, sx:0, matched:false, cleared:false };
+}
+// a tile that is solid but immovable — blocks gravity/swap like a pillar
+function isLocked(tile){ return tile && (tile.matched || tile.cleared); }
+
+// ===================== TIMING HELPERS =====================
+// hover delay scaled by current speed level (1-indexed display level)
+function hoverDelayMs(){
+  let L = riseSpeedLevel + 1;
+  if(L <= 1)  return MS.HOVER_L1;
+  if(L <= 10) return MS.HOVER_L1 + (MS.HOVER_L10 - MS.HOVER_L1) * (L - 1) / 9;
+  let maxL = MAX_RISE_LEVEL + 1;
+  let v = MS.HOVER_L10 + (MS.HOVER_MAX - MS.HOVER_L10) * (L - 10) / (maxL - 10);
+  return Math.max(MS.HOVER_MAX, v);
+}
+// chain freeze interpolated from the 2× / 5× anchor points
+function chainFreezeMs(level){
+  if(level < 2) return 0;
+  let slope = (MS.CHAIN_FREEZE_5 - MS.CHAIN_FREEZE_2) / (5 - 2); // ms per chain level
+  return MS.CHAIN_FREEZE_2 + (level - 2) * slope;
+}
+
+// registers the scorechange hook: pops the HUD score text on every award.
+function setupScoreHook(){
+  let el = document.getElementById('score');
+  let t = null;
+  document.addEventListener('scorechange', () => {
+    el.classList.remove('pop');
+    void el.offsetWidth;                 // force reflow to restart the transition
+    el.classList.add('pop');
+    if(t) clearTimeout(t);
+    t = setTimeout(() => el.classList.remove('pop'), 180);
+  });
+}
+
+// wires up the options panel toggles
+function setupOptions(){
+  let lockEl = document.getElementById('optSpeedLock');
+  lockEl.addEventListener('change', () => {
+    if(lockEl.checked){
+      speedLocked = true;
+      speedLockLevel = riseSpeedLevel;   // freeze at current level
+    } else {
+      speedLocked = false;
+    }
+  });
+}
 
 // ===================== INIT / RESET =====================
 function init(){
@@ -160,18 +312,30 @@ function init(){
   ctx = canvas.getContext('2d');
   resetGame();
   setupInput();
+  setupOptions();
+  setupScoreHook();
   requestAnimationFrame(loop);
 }
 
 function resetGame(){
   cols = 6; rows = 12;
-  score = 0; chainLevel = 0; riseSpeedLevel = 0;
-  riseProgress = 0; state = 'playing'; stateTimer = 0;
-  needsMatchCheck = false; manualRaise = false; swapCooldown = 0; currentThresholdIdx = 0;
+  score = 0; currentChain = 1; riseSpeedLevel = 0;
+  speedLockLevel = 0;       // fresh game starts at base speed even if locked
+  riseProgress = 0; state = 'playing'; phaseTimer = 0;
+  needsMatchCheck = false; currentThresholdIdx = 0;
   expandMsgTimer = 0; chainMsgTimer = 0; expandAnimT = 0;
   lastTime = 0;
   cursorCol = Math.floor(cols/2)-1;
   cursorRow = Math.floor(rows/2);
+  cursorFromCol = cursorCol; cursorFromRow = cursorRow;
+  cursorShiftMs = MS.CURSOR_SHIFT;
+  keys = { left:false, right:false, up:false, down:false };
+  dasDir = null; dasHoldMs = 0; dasActive = false; dasRepeatMs = 0;
+  swapBufferMs = 0; bufferedDir = null;
+  activeSwap = null;
+  matchList = []; popCount = 0;
+  manualRaise = false; raiseLockMs = 0;
+  scoreFlash = 0;
   generateBoard();
   resizeCanvas();
   document.getElementById('overlay').classList.add('hidden');
@@ -209,35 +373,121 @@ function generateBoard(){
 
 // ===================== INPUT =====================
 function setupInput(){
+  const keyMap = { ArrowLeft:'left', ArrowRight:'right', ArrowUp:'up', ArrowDown:'down' };
   document.addEventListener('keydown', e=>{
-    if (state==='gameover') return;
-    // allow cursor movement and swapping during playing, clearing, and falling
-    switch(e.key){
-      case 'ArrowLeft':  e.preventDefault(); if(cursorCol>0) cursorCol--; break;
-      case 'ArrowRight': e.preventDefault(); if(cursorCol<cols-2) cursorCol++; break;
-      case 'ArrowUp':    e.preventDefault(); if(cursorRow>0) cursorRow--; break;
-      case 'ArrowDown':  e.preventDefault(); if(cursorRow<rows-1) cursorRow++; break;
-      case 'z': case 'Z': case ' ': e.preventDefault(); doSwap(); break;
-      case 'x': case 'X':
-        e.preventDefault();
-        if(state==='playing' && !manualRaise) manualRaise=true;
-        break;
+    if(state==='gameover') return;
+    // swap
+    if(e.key==='z' || e.key==='Z' || e.key===' '){ e.preventDefault(); doSwap(); return; }
+    // manual raise
+    if(e.key==='x' || e.key==='X'){
+      e.preventDefault();
+      if(state==='playing' && !manualRaise && raiseLockMs<=0){
+        manualRaise = true; raiseLockMs = MS.MANUAL_RAISE;
+      }
+      return;
     }
+    let dir = keyMap[e.key];
+    if(!dir) return;
+    e.preventDefault();
+    // ignore native OS key-repeat: only the initial press registers a tap
+    if(keys[dir]) return;
+    // a new directional press takes over DAS tracking
+    keys.left = keys.right = keys.up = keys.down = false;
+    keys[dir] = true;
+    dasDir = dir; dasHoldMs = 0; dasActive = false; dasRepeatMs = 0;
+    // instant single tap (buffered if we're inside the swap window)
+    if(swapBufferMs > 0) bufferedDir = dir;
+    else shiftCursor(dir);
+  });
+  document.addEventListener('keyup', e=>{
+    let dir = keyMap[e.key];
+    if(!dir) return;
+    keys[dir] = false;
+    if(dasDir === dir){ dasDir = null; dasActive = false; }
   });
   document.getElementById('restart').addEventListener('click', resetGame);
 }
 
+function shiftCursor(dir){
+  let nc = cursorCol, nr = cursorRow;
+  if(dir==='left'  && cursorCol>0)      nc = cursorCol-1;
+  else if(dir==='right' && cursorCol<cols-2) nc = cursorCol+1;
+  else if(dir==='up'    && cursorRow>0)      nr = cursorRow-1;
+  else if(dir==='down'  && cursorRow<rows-1) nr = cursorRow+1;
+  else return;
+  if(nc!==cursorCol || nr!==cursorRow){
+    cursorFromCol = cursorCol; cursorFromRow = cursorRow;
+    cursorCol = nc; cursorRow = nr;
+    cursorShiftMs = 0;   // begin the 16.67 ms traversal animation
+  }
+}
+
+// processed every update tick — drives DAS, the swap buffer, and the
+// visual cursor traversal. Entirely ms-driven, never frame-counted.
+function updateInput(dtMs){
+  // flush the swap input buffer after MS.SWAP_INPUT_BUFFER
+  if(swapBufferMs > 0){
+    swapBufferMs -= dtMs;
+    if(swapBufferMs <= 0){
+      swapBufferMs = 0;
+      if(bufferedDir){ shiftCursor(bufferedDir); bufferedDir = null; }
+    }
+  }
+  // DAS auto-shift (only outside the swap buffer window)
+  if(swapBufferMs <= 0 && dasDir){
+    dasHoldMs += dtMs;
+    if(!dasActive){
+      if(dasHoldMs >= MS.DAS_INITIAL){ dasActive = true; dasRepeatMs = 0; }
+    } else {
+      dasRepeatMs += dtMs;
+      while(dasRepeatMs >= MS.DAS_REPEAT){
+        dasRepeatMs -= MS.DAS_REPEAT;
+        shiftCursor(dasDir);
+      }
+    }
+  }
+  // visual cursor traversal toward the logical position
+  if(cursorShiftMs < MS.CURSOR_SHIFT)
+    cursorShiftMs = Math.min(MS.CURSOR_SHIFT, cursorShiftMs + dtMs);
+}
+
 function doSwap(){
-  if(swapCooldown>0) return;
-  let r=cursorRow, c=cursorCol;
-  // don't swap if either tile is mid-clear or already cleared (ghost)
-  if(grid[c][r] && (grid[c][r].clearing||grid[c][r].cleared)) return;
-  if(grid[c+1][r] && (grid[c+1][r].clearing||grid[c+1][r].cleared)) return;
-  let tmp = grid[c][r];
-  grid[c][r] = grid[c+1][r];
-  grid[c+1][r] = tmp;
-  needsMatchCheck = true;
-  swapCooldown = SWAP_COOLDOWN;
+  // fully blocked during a manual raise scroll
+  if(raiseLockMs > 0) return;
+  // mid-air trick: a moving panel cannot be swapped again until SWAP_INTERRUPT
+  if(activeSwap && activeSwap.t < MS.SWAP_INTERRUPT) return;
+  let r = cursorRow, c = cursorCol;
+  if(c > cols-2) return;                       // need two adjacent columns
+  if(isLocked(grid[c][r]) || isLocked(grid[c+1][r])) return;
+  // logical swap
+  let a = grid[c][r], b = grid[c+1][r];
+  grid[c][r] = b; grid[c+1][r] = a;
+  // snap any in-flight swap, then start the new animation
+  for(let cc=0;cc<cols;cc++) for(let rr=0;rr<rows;rr++)
+    if(grid[cc][rr]) grid[cc][rr].sx = 0;
+  if(a) a.sx = -TILE_SIZE;   // a moved left→right slot: starts at its old slot
+  if(b) b.sx = +TILE_SIZE;   // b moved right→left slot: starts at its old slot
+  activeSwap = { t: 0 };
+  swapBufferMs = MS.SWAP_INPUT_BUFFER;
+  // match check fires when the swap animation completes
+}
+
+// advances the swap animation; on completion queues a match check
+function updateSwap(dtMs){
+  if(!activeSwap) return;
+  activeSwap.t += dtMs;
+  let p = Math.min(1, activeSwap.t / MS.SWAP_DURATION);
+  let mag = TILE_SIZE * (1 - p);
+  for(let c=0;c<cols;c++) for(let r=0;r<rows;r++){
+    let t = grid[c][r];
+    if(t && t.sx !== 0) t.sx = (t.sx>0 ? mag : -mag);
+  }
+  if(p >= 1){
+    for(let c=0;c<cols;c++) for(let r=0;r<rows;r++)
+      if(grid[c][r]) grid[c][r].sx = 0;
+    activeSwap = null;
+    needsMatchCheck = true;
+  }
 }
 
 // ===================== MATCH DETECTION =====================
@@ -249,9 +499,9 @@ function findMatches(){
   for(let r=0;r<rows;r++){
     let c=0;
     while(c<cols){
-      if(!grid[c][r]||grid[c][r].clearing||grid[c][r].cleared){c++;continue;}
+      if(!grid[c][r] || isLocked(grid[c][r])){ c++; continue; }
       let clr=grid[c][r].color, end=c+1;
-      while(end<cols && grid[end][r] && !grid[end][r].clearing && !grid[end][r].cleared &&
+      while(end<cols && grid[end][r] && !isLocked(grid[end][r]) &&
             grid[end][r].color===clr) end++;
       if(end-c>=3) for(let i=c;i<end;i++) matched[i][r]=true;
       c=end;
@@ -261,9 +511,9 @@ function findMatches(){
   for(let c=0;c<cols;c++){
     let r=0;
     while(r<rows){
-      if(!grid[c][r]||grid[c][r].clearing||grid[c][r].cleared){r++;continue;}
+      if(!grid[c][r] || isLocked(grid[c][r])){ r++; continue; }
       let clr=grid[c][r].color, end=r+1;
-      while(end<rows && grid[c][end] && !grid[c][end].clearing && !grid[c][end].cleared &&
+      while(end<rows && grid[c][end] && !isLocked(grid[c][end]) &&
             grid[c][end].color===clr) end++;
       if(end-r>=3) for(let i=r;i<end;i++) matched[c][i]=true;
       r=end;
@@ -274,49 +524,126 @@ function findMatches(){
   return { matched, count };
 }
 
-// ===================== CLEARING / SCORING =====================
-function startClearing(result){
-  chainLevel++;
-  let tiles=result.count;
-  let baseScore  = tiles*10;
-  let chainMult  = chainLevel;
-  let comboBonus = Math.max(0,tiles-3)*20;
-  score += baseScore*chainMult + comboBonus;
-
-  // assign staggered clear timers so tiles vanish one at a time
-  let idx=0;
-  for(let c=0;c<cols;c++)
-    for(let r=rows-1;r>=0;r--)
-      if(result.matched[c][r]){
-        grid[c][r].clearing=true;
-        grid[c][r].clearTimer=CLEAR_BASE_DELAY+idx*CLEAR_STAGGER;
-        idx++;
-      }
-
-  state='clearing';
-  if(chainLevel>=2) chainMsgTimer=1.6;
+// ===================== SCORING ENGINE =====================
+// Hook: whenever score changes, a 'scorechange' CustomEvent fires on
+// document so the UI layer can react (score text pop). addScore() is the
+// single mutation point — never write to `score` directly elsewhere.
+let scoreFlash;   // 0..1 visual pop triggered by the scorechange hook
+function addScore(amount){
+  if(amount <= 0) return;
+  score += amount;
+  scoreFlash = 1;
+  document.dispatchEvent(new CustomEvent('scorechange', {
+    detail: { score, delta: amount, chain: currentChain }
+  }));
 }
 
-function removeMatched(){
-  for(let c=0;c<cols;c++)
-    for(let r=0;r<rows;r++)
-      if(grid[c][r]&&grid[c][r].clearing) grid[c][r]=null;
+// Simultaneous Clears (Combos): flat bonus by unique panels cleared at one
+// instant. 3 panels = baseline (0). Beyond 8: Score = 70 + ((Panels-8)*10).
+function comboScore(panels){
+  if(panels <= 3) return 0;
+  if(panels === 4) return 20;
+  if(panels === 5) return 30;
+  if(panels === 6) return 50;
+  if(panels === 7) return 60;
+  if(panels === 8) return 70;
+  return 70 + (panels - 8) * 10;
+}
+
+// Consecutive Clears (Chains): reward by current chain multiplier level.
+// NO hard cap — scales infinitely past the lookup table. For N >= 14 every
+// chain-level step is worth 1800: chainScore(N) = 1800 * (N - 13).
+function chainScore(level){
+  if(level <= 1) return 0;          // baseline match, no active chain
+  const table = [0,0,50,80,150,300,400,500,700,900,1100,1300,1500,1800];
+  if(level <= 13) return table[level];
+  return 1800 * (level - 12);       // N >= 14: 1800 per step, no plateau
+}
+
+// ===================== MATCH LIFECYCLE =====================
+// beginMatch evaluates combo + chain score and arms the lifecycle. The
+// caller increments currentChain for gravity chains BEFORE calling this
+// (see the 'falling' branch). A swap/raise match scores at currentChain
+// as-is (1 = baseline, no chain bonus).
+function beginMatch(result){
+  let earned = comboScore(result.count) + chainScore(currentChain);
+  addScore(earned);
+
+  // ordered pop list: top-to-bottom, then left-to-right
+  matchList = [];
+  for(let r=0;r<rows;r++)
+    for(let c=0;c<cols;c++)
+      if(result.matched[c][r]){
+        grid[c][r].matched = true;
+        matchList.push({c, r});
+      }
+  popCount = 0;
+  if(currentChain >= 2) chainMsgTimer = 1.6;
+
+  if(currentChain >= 2){
+    state = 'chainfreeze';
+    phaseTimer = chainFreezeMs(currentChain);
+  } else {
+    enterMatchLifecycle();
+  }
+}
+
+function enterMatchLifecycle(){
+  state = 'matchdelay';
+  phaseTimer = 0;
+}
+
+// drives matchdelay → flash → wince → popping using accumulated ms
+function updateMatchLifecycle(dtMs){
+  phaseTimer += dtMs;
+  if(state === 'matchdelay'){
+    if(phaseTimer >= MS.MATCH_CHECK_DELAY){ state='flash'; phaseTimer=0; }
+  } else if(state === 'flash'){
+    if(phaseTimer >= MS.FLASH){ state='wince'; phaseTimer=0; }
+  } else if(state === 'wince'){
+    if(phaseTimer >= MS.WINCE){ state='popping'; phaseTimer=0; }
+  } else if(state === 'popping'){
+    // sequential explosion: one panel per POP_PER_PANEL, L→R / T→B
+    let target = Math.floor(phaseTimer / MS.POP_PER_PANEL);
+    while(popCount < matchList.length && popCount < target){
+      let m = matchList[popCount];
+      if(grid[m.c] && grid[m.c][m.r]) grid[m.c][m.r].cleared = true; // vanish (ghost)
+      popCount++;
+    }
+    let totalPop = matchList.length * MS.POP_PER_PANEL;
+    if(phaseTimer >= totalPop) finishClear();
+  }
+}
+
+function finishClear(){
+  // remove all matched/cleared panels
+  for(let c=0;c<cols;c++) for(let r=0;r<rows;r++)
+    if(grid[c][r] && (grid[c][r].matched || grid[c][r].cleared)) grid[c][r] = null;
+  matchList = [];
+  // unsupported panels hover before gravity (post-clear hover rule)
+  if(hasFloating()){
+    state = 'hover';
+    phaseTimer = 0;
+  } else {
+    currentChain = 1;   // queue empty (nothing left to fall) → reset multiplier
+    state = 'playing';
+    needsMatchCheck = false;
+  }
 }
 
 // ===================== GRAVITY =====================
 function applyGravity(){
   for(let c=0;c<cols;c++){
-    let writeRow=rows-1;
+    let writeRow = rows-1;
     for(let r=rows-1;r>=0;r--){
       if(grid[c][r]){
-        if(grid[c][r].clearing || grid[c][r].cleared){
-          // clearing/ghost tiles are fixed pillars — don't move them
-          writeRow = r - 1;
+        if(isLocked(grid[c][r])){
+          writeRow = r - 1;          // matched/cleared tiles are fixed pillars
         } else {
-          if(writeRow!==r){
-            grid[c][writeRow]=grid[c][r];
-            grid[c][writeRow].vy += (writeRow-r)*TILE_SIZE;
-            grid[c][r]=null;
+          if(writeRow !== r){
+            grid[c][writeRow] = grid[c][r];
+            grid[c][writeRow].vy += (writeRow - r) * TILE_SIZE;
+            grid[c][r] = null;
           }
           writeRow--;
         }
@@ -325,25 +652,29 @@ function applyGravity(){
   }
 }
 
+function updateFallAnimations(dt){
+  let sp = fallSpeedPxPerSec();
+  for(let c=0;c<cols;c++) for(let r=0;r<rows;r++){
+    let t = grid[c][r];
+    if(t && t.vy > 0){ t.vy -= sp*dt; if(t.vy < 0) t.vy = 0; }
+  }
+}
+
 function allSettled(){
-  for(let c=0;c<cols;c++)
-    for(let r=0;r<rows;r++)
-      if(grid[c][r]&&grid[c][r].vy>0) return false;
+  for(let c=0;c<cols;c++) for(let r=0;r<rows;r++)
+    if(grid[c][r] && grid[c][r].vy > 0) return false;
   return true;
 }
 
-// returns true if any non-clearing tile has an empty space below it in the same column
-// clearing/cleared tiles act as barriers — gaps below them are unreachable from above
+// true if any free tile has an empty space below it in its column.
+// matched/cleared tiles act as barriers (gaps below them are unreachable).
 function hasFloating(){
   for(let c=0;c<cols;c++){
-    let foundNull=false;
+    let foundNull = false;
     for(let r=rows-1;r>=0;r--){
-      if(!grid[c][r]) foundNull=true;
-      else {
-        if(grid[c][r].clearing || grid[c][r].cleared){
-          foundNull=false; // barrier tile — gap below is unreachable
-        } else if(foundNull) return true;
-      }
+      if(!grid[c][r]) foundNull = true;
+      else if(isLocked(grid[c][r])) foundNull = false;
+      else if(foundNull) return true;
     }
   }
   return false;
@@ -351,28 +682,25 @@ function hasFloating(){
 
 // ===================== RISE =====================
 function getRiseSpeed(){
-  return RISE_BASE_SPEED + Math.min(riseSpeedLevel,MAX_RISE_LEVEL)*RISE_INCREMENT;
+  return RISE_BASE_SPEED + Math.min(riseSpeedLevel, MAX_RISE_LEVEL) * RISE_INCREMENT;
 }
 
 function handleRise(dt){
-  let speed = manualRaise ? TILE_SIZE / 0.1 : getRiseSpeed();
-  riseProgress += speed*dt;
-  if(riseProgress>=TILE_SIZE){
-    // shift up
+  let speed = manualRaise ? TILE_SIZE / (MS.MANUAL_RAISE / 1000) : getRiseSpeed();
+  riseProgress += speed * dt;
+  if(riseProgress >= TILE_SIZE){
     for(let c=0;c<cols;c++){
-      for(let r=0;r<rows-1;r++) grid[c][r]=grid[c][r+1];
-      grid[c][rows-1]=nextRow[c];
-      nextRow[c]=makeTile(Math.floor(Math.random()*COLORS.length));
+      for(let r=0;r<rows-1;r++) grid[c][r] = grid[c][r+1];
+      grid[c][rows-1] = nextRow[c];
+      nextRow[c] = makeTile(Math.floor(Math.random()*COLORS.length));
     }
-    riseProgress-=TILE_SIZE;
-    manualRaise=false;           // fast-raise complete
-    // game-over check: AFTER shift, if any tile now sits in top row
+    riseProgress -= TILE_SIZE;
+    manualRaise = false;            // fast-raise complete
     for(let c=0;c<cols;c++){
       if(grid[c][0]){ state='gameover'; showGameOver(); return; }
     }
-    needsMatchCheck=true;
-    // keep cursor locked to the same visual row as blocks rise
-    if(cursorRow>0) cursorRow--;
+    needsMatchCheck = true;
+    if(cursorRow > 0) cursorRow--;  // keep cursor on the same visual row
   }
 }
 
@@ -404,6 +732,7 @@ function expandGrid(newCols,newRows){
   if(cursorCol>cols-2) cursorCol=cols-2;
   if(cursorCol<0) cursorCol=0;
   if(cursorRow>rows-1) cursorRow=rows-1;
+  cursorFromCol=cursorCol; cursorFromRow=cursorRow;
 
   let nr=new Array(newCols).fill(null);
   for(let c=0;c<oldCols;c++) nr[c+leftAdd]=nextRow[c];
@@ -422,16 +751,6 @@ function expandGrid(newCols,newRows){
   }
 }
 
-// ===================== ANIMATIONS =====================
-function updateAnimations(dt){
-  for(let c=0;c<cols;c++)
-    for(let r=0;r<rows;r++)
-      if(grid[c][r]&&grid[c][r].vy>0){
-        grid[c][r].vy-=FALL_SPEED*dt;
-        if(grid[c][r].vy<0) grid[c][r].vy=0;
-      }
-}
-
 // ===================== GAME OVER =====================
 function showGameOver(){
   document.getElementById('overlay').classList.remove('hidden');
@@ -439,73 +758,62 @@ function showGameOver(){
 }
 
 // ===================== UPDATE =====================
-function update(dt){
-  updateAnimations(dt);
-  if(swapCooldown>0) swapCooldown-=dt;
+function update(dt, dtMs){
+  updateInput(dtMs);
+  if(raiseLockMs > 0) raiseLockMs -= dtMs;
   if(expandMsgTimer>0) expandMsgTimer-=dt;
   if(chainMsgTimer>0)  chainMsgTimer-=dt;
   if(expandAnimT>0 && expandAnimT<1) expandAnimT=Math.min(1,expandAnimT+dt*3);
+  if(scoreFlash>0) scoreFlash=Math.max(0,scoreFlash-dt*4);
 
-  riseSpeedLevel=Math.floor(score/RISE_LEVEL_STEP);
+  // swap + fall animations run in every active state (so tiles never
+  // freeze mid-fall when the state machine transitions, e.g. a falling
+  // tile that triggers a match still animates while clearing proceeds)
+  updateSwap(dtMs);
+  updateFallAnimations(dt);
 
-  if(state==='playing'){
+  // a completed swap (or a rise shift) may have queued a match check
+  if(needsMatchCheck){
+    needsMatchCheck = false;
+    let res = findMatches();
+    if(res.count >= 3){ beginMatch(res); }
+    else if(state === 'playing' && hasFloating()){ applyGravity(); state='falling'; }
+  }
+
+  // speed level scales with score — unless the Lock Speed option is engaged,
+  // in which case it stays frozen at the level captured when locking
+  if(!speedLocked){
+    riseSpeedLevel = Math.floor(score/RISE_LEVEL_STEP);
+  } else {
+    riseSpeedLevel = speedLockLevel;
+  }
+
+  if(state === 'playing'){
     handleRise(dt);
-    if(state!=='playing') { /* game over inside handleRise */ }
-    else if(needsMatchCheck){
-      needsMatchCheck=false;
-      let res=findMatches();
-      if(res.count>=3) startClearing(res);
-      else if(hasFloating()){ applyGravity(); state='falling'; }
-    }
-  } else if(state==='clearing'){
-    // decrement per-tile clear timers; mark tiles as cleared when expired
-    for(let c=0;c<cols;c++)
-      for(let r=0;r<rows;r++)
-        if(grid[c][r]&&grid[c][r].clearing){
-          grid[c][r].clearTimer-=dt;
-          if(grid[c][r].clearTimer<=0){
-            grid[c][r].cleared=true;
-            grid[c][r].clearing=false;
-          }
-        }
-
-    // process new matches immediately (e.g. from swaps during clearing)
-    if(needsMatchCheck){
-      needsMatchCheck=false;
-      let res=findMatches();
-      if(res.count>=3) startClearing(res);
-    }
-
-    // allow non-match tiles to fall into gaps while clearing continues
-    if(hasFloating()){ applyGravity(); }
-
-    // check if any tiles are still clearing
-    let anyClearing=false;
-    outer:
-    for(let c=0;c<cols;c++){
-      for(let r=0;r<rows;r++){
-        if(grid[c][r]&&grid[c][r].clearing){anyClearing=true;break outer;}
-      }
-    }
-
-    if(!anyClearing){
-      // all clear sequences finished — remove ghost tiles and apply gravity
-      for(let c=0;c<cols;c++)
-        for(let r=0;r<rows;r++)
-          if(grid[c][r]&&grid[c][r].cleared) grid[c][r]=null;
-      applyGravity();
-      state='falling';
-    }
-  } else if(state==='falling'){
+  } else if(state === 'chainfreeze'){
+    phaseTimer -= dtMs;
+    if(phaseTimer <= 0) enterMatchLifecycle();
+  } else if(state === 'matchdelay' || state === 'flash' ||
+            state === 'wince' || state === 'popping'){
+    updateMatchLifecycle(dtMs);
+    // free tiles with unblocked gaps below them fall concurrently while
+    // other tiles are still clearing — gravity here respects matched/cleared
+    // tiles as immovable pillars, so only genuinely free tiles move
+    if(hasFloating()) applyGravity();
+  } else if(state === 'hover'){
+    phaseTimer += dtMs;
+    if(phaseTimer >= hoverDelayMs()){ applyGravity(); state='falling'; }
+  } else if(state === 'falling'){
     if(allSettled()){
-      let res=findMatches();
-      if(res.count>=3) startClearing(res);
-      else { chainLevel=0; state='playing'; }
+      let res = findMatches();
+      if(res.count >= 3){ currentChain++; beginMatch(res); }  // gravity chain
+      else { currentChain = 1; state = 'playing'; }            // queue emptied
     }
   }
+
   checkExpansion();
-  // safety: if we ever leave 'playing', cancel any pending fast-raise
-  if(state!=='playing') manualRaise=false;
+  // safety: cancel any pending fast-raise outside of playing
+  if(state !== 'playing') manualRaise = false;
 }
 
 // ===================== RENDERING =====================
@@ -522,7 +830,7 @@ function render(){
     if(grid[c][1]){danger=true;break;}
   }
   if(danger){
-    let pulse=0.06+Math.sin(Date.now()/250)*0.04;
+    let pulse=0.06+Math.sin(performance.now()/250)*0.04;
     ctx.fillStyle='rgba(255,30,30,'+pulse+')';
     ctx.fillRect(0,0,cols*TILE_SIZE,TILE_SIZE*2);
   }
@@ -543,16 +851,17 @@ function render(){
   for(let c=0;c<cols;c++)
     for(let r=0;r<rows;r++)
       if(grid[c][r]){
-        let x=c*TILE_SIZE;
-        let y=r*TILE_SIZE-riseProgress-grid[c][r].vy;
+        let x=c*TILE_SIZE + grid[c][r].sx;
+        let y=r*TILE_SIZE - riseProgress - grid[c][r].vy;
         drawTile(grid[c][r],x,y);
       }
 
-  // nextRow (incoming row rising from bottom) – heavily dimmed until fully on board
-  let riseT = TILE_SIZE > 0 ? riseProgress / TILE_SIZE : 0;
-  let rowAlpha = 0.10 + 0.90 * riseT;
+  // nextRow (incoming row rising from bottom) – held at constant very dim
+  // opacity for the ENTIRE rise, then snaps to full brightness the instant
+  // it is shifted onto the grid (rendered as a normal tile above). No
+  // gradual transition whatsoever.
   ctx.save();
-  ctx.globalAlpha = rowAlpha;
+  ctx.globalAlpha = OFFBOARD_ROW_ALPHA;
   for(let c=0;c<cols;c++)
     if(nextRow[c]){
       let x=c*TILE_SIZE;
@@ -570,7 +879,7 @@ function render(){
   }
 
   // cursor (translated)
-  if(state==='playing'||state==='clearing'||state==='falling'){
+  if(state!=='gameover'){
     ctx.save();
     ctx.translate(0, gridOffsetY);
     drawCursor();
@@ -578,16 +887,16 @@ function render(){
   }
 
   // chain message (on canvas)
-  if(chainMsgTimer>0 && chainLevel>=2){
+  if(chainMsgTimer>0 && currentChain>=2){
     let a=Math.min(1,chainMsgTimer);
     ctx.save();
     ctx.font='bold 30px "Courier New",monospace';
     ctx.textAlign='center';
     ctx.textBaseline='top';
     ctx.fillStyle='rgba(0,0,0,'+a*0.6+')';
-    ctx.fillText('CHAIN x'+chainLevel+'!',canvas.width/2+2,gridOffsetY+12);
+    ctx.fillText('CHAIN x'+currentChain+'!',canvas.width/2+2,gridOffsetY+12);
     ctx.fillStyle='rgba(255,220,50,'+a+')';
-    ctx.fillText('CHAIN x'+chainLevel+'!',canvas.width/2,gridOffsetY+10);
+    ctx.fillText('CHAIN x'+currentChain+'!',canvas.width/2,gridOffsetY+10);
     ctx.restore();
   }
 
@@ -610,6 +919,66 @@ function render(){
   }
 }
 
+// Draws a symbol centred at (cx,cy) sized to occupy ~90% of the tile.
+// fillColor = the slightly-different shade; strokeColor = subtle outline.
+function drawSymbol(type, cx, cy, size, fillColor, strokeColor){
+  let r = size * 0.45;   // outer radius (diameter = 90% of tile)
+  let lw = Math.max(1, size * 0.025);
+  ctx.fillStyle = fillColor;
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = lw;
+
+  if(type === 'circle'){
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.85, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+  } else if(type === 'square'){
+    let half = r * 0.68;   // slightly smaller than other symbols
+    let rad = Math.max(2, size * 0.07);
+    ctx.beginPath();
+    ctx.roundRect(cx - half, cy - half, half * 2, half * 2, rad);
+    ctx.fill(); ctx.stroke();
+  } else if(type === 'diamond'){
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r);
+    ctx.lineTo(cx + r * 0.9, cy);
+    ctx.lineTo(cx, cy + r);
+    ctx.lineTo(cx - r * 0.9, cy);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  } else if(type === 'triangle'){
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r * 0.9);
+    ctx.lineTo(cx + r * 0.85, cy + r * 0.55);
+    ctx.lineTo(cx - r * 0.85, cy + r * 0.55);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  } else if(type === 'star'){
+    ctx.beginPath();
+    let outerR = r * 0.95;
+    let innerR = outerR * 0.42;
+    for(let i = 0; i < 10; i++){
+      let a = -Math.PI / 2 + i * Math.PI / 5;
+      let rr = (i % 2 === 0) ? outerR : innerR;
+      let px = cx + Math.cos(a) * rr;
+      let py = cy + Math.sin(a) * rr;
+      if(i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  } else if(type === 'heart'){
+    ctx.beginPath();
+    ctx.moveTo(cx, cy + r * 0.75);
+    ctx.bezierCurveTo(cx + r * 1.15, cy + r * 0.15, cx + r * 0.95, cy - r * 0.7, cx + r * 0.4, cy - r * 0.35);
+    ctx.bezierCurveTo(cx + r * 0.2, cy - r * 0.2, cx, cy - r * 0.15, cx, cy - r * 0.1);
+    ctx.bezierCurveTo(cx, cy - r * 0.15, cx - r * 0.2, cy - r * 0.2, cx - r * 0.4, cy - r * 0.35);
+    ctx.bezierCurveTo(cx - r * 0.95, cy - r * 0.7, cx - r * 1.15, cy + r * 0.15, cx, cy + r * 0.75);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+}
+
 function drawTile(tile,x,y){
   if(tile.cleared) return; // ghost tile — invisible but blocks space
   let col=COLORS[tile.color];
@@ -617,9 +986,9 @@ function drawTile(tile,x,y){
   let rad=Math.max(3,Math.round(s*0.15));
   let m=col.main, l=col.light;
 
-  if(tile.clearing){
-    if(Math.floor(tile.clearTimer*16)%2===0){ m='#ffffff'; l='#ffffff'; }
-  }
+  // match-lifecycle rendering driven by absolute phase state
+  if(tile.matched && state==='flash'){ m='#ffffff'; l='#ffffff'; }
+  else if(tile.matched && state==='wince'){ m=col.dark; l=col.main; }
 
   let g=ctx.createLinearGradient(x,y,x,y+s);
   g.addColorStop(0,l); g.addColorStop(0.55,m); g.addColorStop(1,col.dark);
@@ -635,20 +1004,24 @@ function drawTile(tile,x,y){
   ctx.lineWidth=1;
   ctx.beginPath(); ctx.roundRect(x+p,y+p,s-p*2,s-p*2,rad); ctx.stroke();
 
-  // colourblind letter
-  ctx.fillStyle='rgba(255,255,255,0.85)';
-  ctx.font='bold '+Math.round(s*0.375)+'px "Courier New",monospace';
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText(col.name,x+s/2,y+s/2+1);
+  // symbol (90% of block, slightly different shade of the block colour)
+  let symFill = col.light;
+  let symStroke = 'rgba(0,0,0,0.25)';
+  if(tile.matched && state==='flash'){ symFill='#ffffff'; symStroke='#ffffff'; }
+  else if(tile.matched && state==='wince'){ symFill=col.main; symStroke=col.dark; }
+  drawSymbol(col.symbol, x+s/2, y+s/2, s, symFill, symStroke);
 }
 
 function drawCursor(){
-  let x=cursorCol*TILE_SIZE;
-  let y=cursorRow*TILE_SIZE-riseProgress;
+  let p = Math.min(1, cursorShiftMs / MS.CURSOR_SHIFT);
+  let vc = cursorFromCol + (cursorCol - cursorFromCol) * p;
+  let vr = cursorFromRow + (cursorRow - cursorFromRow) * p;
+  let x=vc*TILE_SIZE;
+  let y=vr*TILE_SIZE-riseProgress;
   let w=TILE_SIZE*2, h=TILE_SIZE;
   let rad=Math.max(3,Math.round(TILE_SIZE*0.125));
 
-  let pulse=Math.sin(Date.now()/180)*0.25+0.75;
+  let pulse=Math.sin(performance.now()/180)*0.25+0.75;
   ctx.strokeStyle='rgba(253,224,71,'+(pulse*0.35)+')';
   ctx.lineWidth=7;
   ctx.beginPath(); ctx.roundRect(x+1,y+1,w-2,h-2,rad); ctx.stroke();
@@ -661,19 +1034,23 @@ function drawCursor(){
 // ===================== HUD =====================
 function updateHUD(){
   document.getElementById('score').textContent=score;
-  document.getElementById('chain').textContent=chainLevel;
+  document.getElementById('chain').textContent = currentChain >= 2 ? currentChain : 0;
   document.getElementById('speed').textContent=riseSpeedLevel+1;
   document.getElementById('gridsize').textContent=cols+'\u00d7'+rows;
 }
 
 // ===================== MAIN LOOP =====================
-function loop(ts){
-  if(!lastTime) lastTime=ts;
-  let dt=(ts-lastTime)/1000;
-  lastTime=ts;
-  if(dt>0.1) dt=0.1;
+// Delta-time accumulator sourced from performance.now(). The rAF loop is
+// only a render trigger; all engine state advances by real elapsed ms.
+function loop(){
+  let now = performance.now();
+  if(!lastTime) lastTime = now;
+  let dt = (now - lastTime) / 1000;
+  lastTime = now;
+  if(dt > 0.1) dt = 0.1;           // clamp tab-switch spikes
+  let dtMs = dt * 1000;
 
-  if(state!=='gameover') update(dt);
+  if(state !== 'gameover') update(dt, dtMs);
   render();
   updateHUD();
   requestAnimationFrame(loop);
