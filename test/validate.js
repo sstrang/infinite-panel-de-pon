@@ -2,7 +2,7 @@
 const fs = require('fs');
 const vm = require('vm');
 
-const html = fs.readFileSync(__dirname + '/index.html', 'utf8');
+const html = fs.readFileSync(__dirname + '/../index.html', 'utf8');
 const match = html.match(/<script>([\s\S]*?)<\/script>/);
 if (!match) { console.log('ERROR: No <script> tag found'); process.exit(1); }
 

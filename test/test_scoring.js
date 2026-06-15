@@ -6,7 +6,7 @@
 //  Authentic values verified against panel-attack checkMatches.lua 13-22.
 // ====================================================================
 
-const E = require("./engine.js");
+const E = require("../engine.js");
 const PRESET = E.MODERN_PRESETS[0];          // level 1 modern preset
 
 function newStack() {

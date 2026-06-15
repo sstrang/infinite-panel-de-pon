@@ -6,7 +6,7 @@
 //  Authentic references: panel-attack common/engine/*.lua + LevelPresets.lua
 // ====================================================================
 
-const E = require("./engine.js");
+const E = require("../engine.js");
 
 let pass = 0, fail = 0;
 function assert(c, m) { if (c) { pass++; console.log("  PASS: " + m); } else { fail++; console.log("  FAIL: " + m); } }

@@ -7,7 +7,7 @@
 //  engine.js. Replaces the pre-refactor ms-based integration test.
 // ====================================================================
 
-const E = require("./engine.js");
+const E = require("../engine.js");
 
 let pass = 0, fail = 0;
 function assert(c, m) { if (c) { pass++; console.log("  PASS: " + m); } else { fail++; console.log("  FAIL: " + m); } }

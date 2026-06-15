@@ -4,7 +4,7 @@
 //  Verifies shouldDangerWobble() fires only when a panel is in the danger
 //  row (height-1) and no match/chain/gameover suppresses it.
 // ====================================================================
-const E = require("./engine.js");
+const E = require("../engine.js");
 
 let pass = 0, fail = 0;
 function assert(c, m) { if (c) { pass++; console.log("  PASS: " + m); } else { fail++; console.log("  FAIL: " + m); } }
