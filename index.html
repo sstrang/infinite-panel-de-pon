@@ -325,8 +325,10 @@ function render() {
   const ox = Math.floor((CW - gridW) / 2);
   const oy = Math.floor(CH - gridH - tile);   // reserve one tile at bottom for the dimmed spawn buffer
 
-  // rise offset: stack sinks (displacement/16)*tile then rises to 0
-  const riseOff = (stack.displacement / 16) * tile;
+  // rise offset: stack sinks (displacement/16)*tile then rises to 0.
+  // Rounded to integer pixels — a fractional translate makes Firefox
+  // re-anti-alias every panel edge per frame (Chrome tolerates sub-pixel).
+  const riseOff = Math.round((stack.displacement / 16) * tile);
 
   ctx.save();
   ctx.translate(ox, oy + riseOff);
@@ -489,14 +491,23 @@ function drawPanel(p, x, y, tile) {
     bh *= sq; by += (tile - pad * 2) * (1 - sq);
   }
 
-  ctx.globalAlpha *= alpha;
-  roundRect(bx, by, bw, bh, Math.max(2, tile * 0.12));
+  // Draw body + symbol at the panel's alpha, then restore globalAlpha exactly.
+  // The old `*= alpha` / `/= alpha` pattern left a float-precision residue in
+  // Firefox (which stores globalAlpha at reduced precision), leaking a tiny
+  // alpha into every panel drawn afterwards — the same row and all rows above
+  // a clearing block — producing a visible brightness flicker during the clear
+  // animation. Chrome's full-precision globalAlpha masked it.
+  const ga = ctx.globalAlpha;
+  ctx.globalAlpha = ga * alpha;
+  // snap to integer pixels: Firefox re-rasterises sub-pixel fills (especially
+  // arcTo rounded corners with a fractional radius) with per-frame AA variance
+  const rx = Math.round(bx), ry = Math.round(by), rw = Math.round(bw), rh = Math.round(bh);
+  roundRect(rx, ry, rw, rh, Math.floor(Math.max(2, tile * 0.12)));
   ctx.fillStyle = main;
   ctx.fill();
-  ctx.globalAlpha /= alpha;
-
-  // symbol (lighter shade), ~90% of tile
-  drawSymbol(col.symbol, bx, by, bw, bh, col.light);
+  // symbol (lighter shade), ~90% of tile — fades with the body
+  drawSymbol(col.symbol, rx, ry, rw, rh, col.light);
+  ctx.globalAlpha = ga;
 }
 
 function roundRect(x, y, w, h, r) {
