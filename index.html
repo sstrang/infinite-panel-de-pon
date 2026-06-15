@@ -55,6 +55,13 @@
   }
   #instructions h2 { font-size: 13px; margin: 0 0 8px; color: #8be9fd; text-transform: uppercase; letter-spacing: 1px; }
   #instructions p { margin: 0; color: #b8bcd0; font-size: 12px; line-height: 1.6; }
+  #leftbar { display: flex; flex-direction: column; gap: 12px; }
+  #controls {
+    width: 168px; padding: 12px 16px; background: #141728; border: 1px solid #2a2f45;
+    border-radius: 6px; font-size: 13px; line-height: 1.7;
+  }
+  #controls h2 { font-size: 13px; margin: 0 0 8px; color: #8be9fd; text-transform: uppercase; letter-spacing: 1px; }
+  #controls p { margin: 0; color: #50536b; font-size: 11px; line-height: 1.5; }
   #overlay {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; background: rgba(7,8,15,.82);
@@ -68,9 +75,17 @@
 </head>
 <body>
 <div id="wrap">
-  <div id="instructions">
-    <h2>Instructions</h2>
-    <p>Move the cursor around and swap the two highlighted blocks to create matches of 3 or more. Chain reactions score more points.</p>
+  <div id="leftbar">
+    <div id="instructions">
+      <h2>Instructions</h2>
+      <p>Move the cursor around and swap the two highlighted blocks to create matches of 3 or more. Chain reactions score more points.</p>
+    </div>
+    <div id="controls">
+      <h2>Controls</h2>
+      <p>Arrows/WASD: move &nbsp; Z/Space: swap<br>
+      X/Shift: raise &nbsp; P: pause<br>
+      Enter: restart &nbsp; R: new game</p>
+    </div>
   </div>
   <div id="stage">
     <canvas id="game" width="400" height="800"></canvas>
@@ -88,11 +103,6 @@
     <div class="row"><span class="lbl">SPEED</span><span class="val" id="hSpeed">1</span></div>
     <div class="row"><span class="lbl">BLOCKS CLEARED</span><span class="val" id="hCleared">0</span></div>
     <div class="row hidden" id="hWidthRow"><span class="lbl">WIDTH</span><span class="val" id="hWidth">6</span></div>
-    <div class="ctrl">
-      Arrows/WASD: move &nbsp; Z/Space: swap<br>
-      X/Shift: raise &nbsp; P: pause<br>
-      Enter: restart &nbsp; R: new game
-    </div>
     </div>
     <div id="stats">
       <h2>stats</h2>
