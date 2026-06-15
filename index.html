@@ -76,8 +76,6 @@
     <div class="row"><span class="lbl">TIME</span><span class="val big" id="hTime">0:00</span></div>
     <div class="row"><span class="lbl">SCORE</span><span class="val big" id="hScore">0</span></div>
     <div class="row"><span class="lbl">SPEED</span><span class="val" id="hSpeed">1</span></div>
-    <div class="row"><span class="lbl">LONGEST CHAIN</span><span class="val" id="hMaxChain">-</span></div>
-    <div class="row"><span class="lbl">LARGEST COMBO</span><span class="val" id="hMaxCombo">-</span></div>
     <div class="row"><span class="lbl">BLOCKS CLEARED</span><span class="val" id="hCleared">0</span></div>
     <div class="row hidden" id="hWidthRow"><span class="lbl">WIDTH</span><span class="val" id="hWidth">6</span></div>
     <div class="ctrl">
@@ -321,12 +319,7 @@ function onGameOver() {
   if (gameStartMs === 0) return;                            // already frozen — idempotent
   gameElapsedMs += performance.now() - gameStartMs;   // freeze timer
   gameStartMs = 0;
-  // Update + persist high scores
-  let beat = false;
-  if (stack.score > best.score) { best.score = stack.score; beat = true; }
-  if (stack.max_chain > best.chain) { best.chain = stack.max_chain; beat = true; }
-  if (stack.max_combo > best.combo) { best.combo = stack.max_combo; beat = true; }
-  if (beat) { saveBest(best); updateBest(); }
+  checkBest();            // final high-score check (updateHUD already caught most)
   showOverlay('GAME OVER', 'Score ' + stack.score, 'Press Enter or R to restart');
 }
 
@@ -346,14 +339,13 @@ function updateHUD() {
   el('hTime').textContent = fmtTime(currentElapsed());
   el('hScore').textContent = stack.score;
   el('hSpeed').textContent = stack.speed;
-  el('hMaxChain').textContent = stack.max_chain > 0 ? 'x' + stack.max_chain : '-';
-  el('hMaxCombo').textContent = stack.max_combo > 0 ? stack.max_combo : '-';
   el('hCleared').textContent = stack.panels_cleared;
   // Width row: hidden until the first board expansion (surprise mechanic)
   if (stack.width > BASE_COLS) {
     el('hWidthRow').classList.remove('hidden');
     el('hWidth').textContent = stack.width;
   }
+  checkBest();          // live high-score updates during gameplay
   updateStats();
 }
 
@@ -379,6 +371,15 @@ function updateStats() {
 }
 
 // ---- high score card ----
+// Called every frame during gameplay (from updateHUD) so records update live
+// the moment they're beaten, not just at game over.
+function checkBest() {
+  let beat = false;
+  if (stack.score > best.score)     { best.score = stack.score;     beat = true; }
+  if (stack.max_chain > best.chain) { best.chain = stack.max_chain; beat = true; }
+  if (stack.max_combo > best.combo) { best.combo = stack.max_combo; beat = true; }
+  if (beat) { saveBest(best); updateBest(); }
+}
 function updateBest() {
   function setVal(id, v, suffix) {
     const e = el(id);
