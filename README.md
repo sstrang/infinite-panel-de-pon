@@ -5,6 +5,10 @@ single self-contained HTML5 canvas file with zero external dependencies. All
 engine timing is driven by an absolute-millisecond accumulator (`performance.now()`),
 so it behaves identically on 60 Hz, 144 Hz, and 240 Hz displays.
 
+All frame tables and scoring values are extracted from **panel-attack**
+(github.com/sharpobject/panel-attack), a faithful reverse-engineering of the
+SNES Panel de Pon / Tetris Attack engine (`globals.lua` + `engine.lua`).
+
 ## How to Play
 
 Open `index.html` in any modern browser, or serve it over HTTP.
@@ -13,15 +17,15 @@ Open `index.html` in any modern browser, or serve it over HTTP.
 |------------------|-------------------------------------|
 | Arrow Keys       | Move cursor (single tap + hold DAS) |
 | Z / Space        | Swap two adjacent panels            |
-| X                | Raise the stack one row (fast)      |
+| X (hold)         | Raise the stack faster              |
 
 Swap adjacent panels to line up **three or more matching symbols** in a row or
 column. Matched panels flash, wince, and pop in a sequential explosion. Panels
 above the cleared ones hover briefly, then fall — and if the fall creates a new
 match, you score a **chain**. Keep chaining for huge multipliers.
 
-The game ends when the stack rises so high that a panel sits in the top danger
-zone when a new row would be pushed onto the board.
+The game ends when a panel sits in the top danger zone and the hang-time
+health counter reaches zero.
 
 ---
 
@@ -62,13 +66,37 @@ The play field starts at **6×12** and expands as your score climbs:
 `TILE_SIZE` is recomputed dynamically from the canvas dimensions (400×800 fixed)
 whenever the grid dimensions change, so the board always fits the viewport.
 
+### Color Count (5 → 6 Transition)
+
+The game starts with **5 colors** (levels 1–2) and adds the **6th color** (Cyan)
+from level 3 onward, matching the original game's difficulty curve. Fewer colors
+early means more match opportunities.
+
 ### Stack Rising
 
 New rows continuously rise from the bottom. A dimmed "incoming row" sits just
 below the board at constant low opacity until it snaps fully onto the grid.
-The rise speed scales with your current speed level, which increases with score.
-Manual raise (X) triggers a 166.67 ms fast scroll and locks out swapping for its
-duration.
+
+The rise speed is driven by the authentic **subpixel table** (99 entries from
+panel-attack `speed_to_subpixels`), where each entry converts to rows/sec via
+`subpixel × 60 / 4096`. The speed counter increments based on **panels cleared**
+(panel-attack `panels_to_next_speed` table), not score — matching the original
+game's speedup mechanic.
+
+Manual raise (hold X) pushes the stack at 8 rows/sec while held. It clears any
+active stop-time instantly. Swapping remains possible during manual raise (no
+lockout).
+
+### Stop Time (Stack Freeze)
+
+After a combo (4+ panels) or chain (2+), the stack **freezes** for a duration
+calculated from authentic level-dependent formula coefficients:
+
+- **Chain stop** = `chain_coeff × min(chain, 13) + chain_const` (in frames)
+- **Combo stop** = `combo_coeff × combo_size + combo_const` (in frames)
+
+Chain freeze takes priority over combo freeze. At level 1, a 4-combo freezes for
+1000 ms; a 2-chain freezes for 2000 ms. Stop times shorten at higher levels.
 
 ### Swapping
 
@@ -80,60 +108,75 @@ duration.
 
 ### Matching & Clear Lifecycle
 
-When 3+ matching panels align, they enter a four-phase state machine driven by
-absolute elapsed time:
+When 3+ matching panels align, they enter a three-phase state machine driven by
+absolute elapsed time. All durations are **level-dependent** (authentic tables):
 
-1. **Match Check Delay** — 150.00 ms pause
-2. **Flash** — all matched panels flash white for 266.67 ms
-3. **Wince** — distressed (darkened) graphic for 166.67 ms
-4. **Pop** — sequential explosion, left-to-right / top-to-bottom, each panel
-   taking **66.67 ms**. Total pop time = unique panel count × 66.67 ms.
-
-Intersecting matches (e.g. a cross of 5) pop sequentially by total unique panel
-count.
+1. **Flash** — all matched panels flash white. L1: 733 ms (44f) → L10: 467 ms (28f)
+2. **Wince** — distressed (darkened) graphic. L1: 250 ms (15f) → L10: 133 ms (8f)
+3. **Pop** — sequential explosion in **zigzag order** (even rows L→R, odd rows
+   R→L), each panel taking L1: 150 ms (9f) → L10: 117 ms (7f). Total pop time =
+   unique panel count × per-panel duration.
 
 ### Gravity & Hover
 
 - Panels fall at **1 row per 16.67 ms** (60 rows/sec).
-- After a clear, unsupported panels **hover** for a delay before gravity applies:
-  - Speed Level 1: **466.67 ms**
-  - Speed Level 10: **233.33 ms**
-  - Max Speed Level: **100.00 ms** (floor)
+- After a clear, unsupported panels **hover** for a level-dependent delay:
+  - L1: **200 ms** (12f)
+  - L9: **50 ms** (3f, fastest)
+  - L10: **100 ms** (6f)
 - Free tiles with pre-existing gaps fall **concurrently** during clearing —
   gravity respects matched/cleared tiles as immovable pillars, so only genuinely
   unblocked tiles move.
 
 ### Chains
 
-When a falling panel forms a new match, `currentChain` increments and a **chain
-freeze** pauses the board for skill-chain inputs:
+When a falling panel forms a new match, `currentChain` increments. The chain
+freeze (stop-time) pauses the board for skill-chain inputs. `currentChain` resets
+to 1 the moment the hover/fall queue fully empties.
 
-| Chain | Freeze Time |
-|-------|-------------|
-| 2×    | 733.33 ms   |
-| 5×    | 1266.67 ms  |
+### Hang Time (Game Over Grace)
 
-Freeze time scales linearly with the chain multiplier. `currentChain` resets to 1
-the moment the hover/fall queue fully empties.
+The game doesn't instantly end when panels reach the top. A **health counter**
+counts down while any panel occupies the top row:
+
+- L1: **121 frames** (~2 seconds of grace)
+- L10: **1 frame** (effectively instant)
+
+Health regenerates fully when panels drop below the top row. The stack cannot
+rise while panels are in the danger zone.
 
 ---
 
 ## Scoring
 
+Every popped panel earns **10 base points** plus any applicable combo and chain
+bonuses:
+
+```
+matchScore = comboBonus + chainBonus + (panelCount × 10)
+```
+
 ### Combos (Simultaneous Clears)
 
-A flat bonus based on the number of panels cleared in a single match event
-(applies only to 4+ panels; a plain 3-match scores 0 bonus):
+Authentic lookup table (capped at 30 panels). A plain 3-match earns 0 combo
+bonus (but still scores 30 from per-panel points):
 
-| Panels | Points |
-|--------|--------|
-| 3      | 0      |
-| 4      | 20     |
-| 5      | 30     |
-| 6      | 50     |
-| 7      | 60     |
-| 8      | 70     |
-| 9+     | 70 + (panels − 8) × 10 |
+| Panels | Combo Bonus |
+|--------|-------------|
+| 3      | 0           |
+| 4      | 20          |
+| 5      | 30          |
+| 6      | 50          |
+| 7      | 60          |
+| 8      | 70          |
+| 9      | 80          |
+| 10     | 100         |
+| 11     | 140         |
+| 12     | 170         |
+| 13     | 210         |
+| 15     | 290         |
+| 20     | 550         |
+| 30+    | 1330 (cap)  |
 
 ### Chains (Consecutive Gravity Clears)
 
@@ -158,14 +201,15 @@ For **14× and higher**, there is **no cap** — the chain score scales infinite
 
 ### Combos During Chains
 
-Combo and chain bonuses are **additive**. A 4-panel clear on a 3× chain scores
-20 (combo) + 80 (chain) = **100 points**.
+Combo, chain, and per-panel bonuses are all **additive**. A 4-panel clear on a
+3× chain scores 20 (combo) + 80 (chain) + 40 (per-panel) = **140 points**.
 
 ---
 
 ## Engine Timing Constants
 
-All values are absolute milliseconds, decoupled from the render loop.
+All values are absolute milliseconds (converted from NTSC 60fps frames at
+16.6667 ms/frame), decoupled from the render loop.
 
 ### Cursor & Input
 | Constant            | Value (ms) | Description |
@@ -180,29 +224,38 @@ All values are absolute milliseconds, decoupled from the render loop.
 |------------------|------------|-------------|
 | `SWAP_DURATION`  | 66.67      | Full swap animation duration |
 | `SWAP_INTERRUPT` | 50.00      | Re-swap allowed after this point |
-| Fall speed       | 16.67/row  | 60 rows/sec (1 row per frame at 60 Hz) |
+| Fall speed       | 16.67/row  | 60 rows/sec |
 
-### Match Lifecycle
-| Constant             | Value (ms) | Description |
-|----------------------|------------|-------------|
-| `MATCH_CHECK_DELAY`  | 150.00     | Pause on alignment detection |
-| `FLASH`              | 266.67     | White flash phase |
-| `WINCE`              | 166.67     | Distressed graphic phase |
-| `POP_PER_PANEL`      | 66.67      | Per-panel pop in sequential explosion |
+### Match Lifecycle (Level-Dependent, in frames → ms)
 
-### Hover & Chain
-| Constant          | Value (ms) | Description |
-|-------------------|------------|-------------|
-| Hover (Level 1)   | 466.67     | Baseline hover delay |
-| Hover (Level 10)  | 233.33     | Mid-level hover delay |
-| Hover (Max Level) | 100.00     | Minimum hover delay |
-| Chain Freeze 2×   | 733.33     | 2-chain skill window |
-| Chain Freeze 5×   | 1266.67    | 5-chain skill window |
+| Level | Flash | Wince | Pop/Panel | Hover |
+|-------|-------|-------|-----------|-------|
+| 1     | 44f (733ms)  | 15f (250ms)  | 9f (150ms)   | 12f (200ms) |
+| 5     | 38f (633ms)  | 12f (200ms)  | 8f (133ms)   | 9f (150ms)  |
+| 10    | 28f (467ms)  | 8f (133ms)   | 7f (117ms)   | 6f (100ms)  |
 
-### Manual Raise
-| Constant        | Value (ms) | Description |
-|-----------------|------------|-------------|
-| `MANUAL_RAISE`  | 166.67     | Scroll duration + full swap lockout |
+### Hang Time (Health, in frames → ms)
+
+| Level | Hang Frames | Hang Time |
+|-------|-------------|-----------|
+| 1     | 121         | ~2017 ms  |
+| 5     | 50          | ~833 ms   |
+| 10    | 1           | ~17 ms    |
+
+### Stop-Time Coefficients (Level-Dependent)
+
+`stop_frames = coeff × size + const` (chain capped at 13, combo requires 4+)
+
+| Level | Combo Coeff | Combo Const | Chain Coeff | Chain Const |
+|-------|-------------|-------------|-------------|-------------|
+| 1     | 20          | -20         | 20          | 80          |
+| 10    | 2           | 22          | 2           | 56          |
+
+### Rise Speed (Authentic Subpixel Table)
+
+99-entry table from panel-attack `speed_to_subpixels`. Converts to rows/sec via
+`subpixel × 60 / 4096`. Speed 1 = ~1.04 rows/s; max (0x1000) = 15 rows/s.
+Speed increments based on panels cleared (`panels_to_next_speed` table).
 
 ---
 
@@ -224,41 +277,33 @@ A side panel to the right of the game board hosts toggleable game options:
 |--------------------------|---------|
 | `index.html`             | The complete game — HTML, CSS, and JS in one file |
 | `validate.js`            | Extracts and syntax-checks the JS; validates DOM ID references |
-| `test_engine.js`         | Engine timing-constants test suite (47 tests) |
-| `test_scoring.js`        | Scoring (combo/chain) test suite (48 tests) |
-| `test.js`                | Core gameplay tests (47 tests) |
-| `test_bugfix.js`         | Regression tests for patched bugs (21 tests) |
-| `test_changes.js`        | Stagger/input/gameover tests (47 tests) |
-| `test_ghost.js`          | Ghost-tile & concurrent-match tests (39 tests) |
-| `test_manualraise.js`    | Manual raise mechanics tests (22 tests) |
-| `test_gravity_swap.js`   | Gravity-during-clearing & swap cooldown tests (64 tests) |
+| `test_engine.js`         | Engine timing & level-dependent tables test suite (62 tests) |
+| `test_scoring.js`        | Scoring (combo/chain/per-panel) test suite (59 tests) |
 
 ### State Machine
 
 The game cycles through these states, all advanced by accumulated milliseconds:
 
 ```
-playing → (match detected) → chainfreeze → matchdelay → flash → wince → popping
-       ↘ (swap, no match, floating) → falling ↗                          ↓
-                                                                   finishClear
-                                                                        ↓
-                                                                  hover → falling
-                                                                        ↓
-                                                              (new match?) → chainfreeze …
-                                                              (no match)   → playing
+playing → (match detected) → flash → wince → popping
+       ↘ (swap, no match, floating) → falling ↗            ↓
+                                                    finishClear
+                                                         ↓
+                                                   hover → falling
+                                                         ↓
+                                                 (new match?) → flash … (chain++)
+                                                 (no match)   → playing
 ```
 
-| State          | Meaning |
-|----------------|---------|
-| `playing`      | Normal play; stack rises, swaps allowed |
-| `chainfreeze`  | Board frozen for skill-chain input (chain ≥ 2) |
-| `matchdelay`   | 150 ms pause after alignment detected |
-| `flash`        | Matched panels flash white |
-| `wince`        | Distressed graphic phase |
-| `popping`      | Sequential explosion, one panel per 66.67 ms |
-| `hover`        | Unsupported panels hover before gravity |
-| `falling`      | Gravity applies; settles → match check or back to playing |
-| `gameover`     | Stack reached the top |
+| State      | Meaning |
+|------------|---------|
+| `playing`  | Normal play; stack rises, swaps allowed, stop-time/hang-time ticks |
+| `flash`    | Matched panels flash white (level-dependent duration) |
+| `wince`    | Distressed graphic phase (level-dependent duration) |
+| `popping`  | Sequential explosion in zigzag order (level-dependent per-panel) |
+| `hover`    | Unsupported panels hover before gravity (level-dependent delay) |
+| `falling`  | Gravity applies; settles → match check or back to playing |
+| `gameover` | Hang-time health reached zero |
 
 ### Game Loop
 
@@ -284,14 +329,8 @@ without a browser:
 
 ```sh
 node validate.js           # syntax + DOM ID check
-node test_engine.js        # engine timing constants
-node test_scoring.js       # scoring tables
-node test.js               # core gameplay
-node test_bugfix.js        # bug regressions
-node test_changes.js       # stagger/input/gameover
-node test_ghost.js         # ghost tiles & concurrent matches
-node test_manualraise.js   # manual raise
-node test_gravity_swap.js  # gravity-during-clearing & swap cooldown
+node test_engine.js        # engine timing & level-dependent tables
+node test_scoring.js       # scoring tables (combo/chain/per-panel)
 ```
 
 ### Serving Over HTTP

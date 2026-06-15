@@ -2,1062 +2,570 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Infinite Panel de Pon</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    background: #0d0d1a;
-    color: #ccc;
-    font-family: 'Courier New', monospace;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-height: 100vh;
-    padding: 15px;
-    user-select: none;
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0d0f1a; color: #e8eaf0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: safe center;
+    overflow-x: auto; overflow-y: hidden; user-select: none;
   }
-  h1 { font-size: 20px; margin-bottom: 8px; color: #fff; letter-spacing: 2px; }
+  #wrap { position: relative; display: flex; gap: 18px; align-items: flex-start; }
+  #stage { position: relative; }
+  canvas#game { background: #07080f; border: 2px solid #2a2f45; border-radius: 6px; display: block; }
   #hud {
-    display: flex;
-    gap: 20px;
-    font-size: 14px;
-    margin-bottom: 8px;
-    background: #1a1a2e;
-    padding: 8px 16px;
-    border-radius: 6px;
-    border: 1px solid #2a2a4e;
+    width: 168px; padding: 14px 16px; background: #141728; border: 1px solid #2a2f45;
+    border-radius: 6px; font-size: 14px; line-height: 1.7;
   }
-  #hud b { color: #fff; font-size: 16px; }
-  #score { display: inline-block; transition: transform .18s cubic-bezier(.34,1.56,.64,1), color .18s; }
-  #score.pop { transform: scale(1.45); color: #ffd700; }
-  #gameWrapper {
-    position: relative;
-    border: 2px solid #333;
-    border-radius: 4px;
-    overflow: hidden;
-    box-shadow: 0 0 30px rgba(0,100,255,0.1);
+  #hud h1 { font-size: 16px; margin: 0 0 10px; color: #8be9fd; letter-spacing: .5px; }
+  #hud .row { display: flex; justify-content: space-between; }
+  #hud .lbl { color: #6b7390; }
+  #hud .val { color: #f1fa8c; font-variant-numeric: tabular-nums; font-weight: 600; }
+  #hud .big { font-size: 22px; color: #ff79c6; }
+  #hud .ctrl { margin-top: 10px; font-size: 11px; color: #50536b; line-height: 1.5; }
+  #sidebar { display: flex; flex-direction: column; gap: 12px; }
+  #stats {
+    width: 168px; padding: 12px 16px; background: #141728; border: 1px solid #2a2f45;
+    border-radius: 6px; font-size: 13px; line-height: 1.7;
   }
-  canvas { display: block; background: #080814; }
+  #stats h2 { font-size: 13px; margin: 0 0 8px; color: #8be9fd; text-transform: uppercase; letter-spacing: 1px; }
+  #stats .sthead { font-size: 10px; color: #6b7390; text-transform: uppercase; letter-spacing: .5px; margin-top: 6px; }
+  #stats .sthead:first-child { margin-top: 0; }
+  #stats .srow { display: flex; justify-content: space-between; }
+  #stats .srow span:last-child { color: #f1fa8c; font-variant-numeric: tabular-nums; font-weight: 600; }
+  #stats .sempty { color: #50536b; font-size: 11px; font-style: italic; }
   #overlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(0,0,0,0.85);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    z-index: 10;
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; background: rgba(7,8,15,.82);
+    border-radius: 6px; text-align: center;
   }
-  #overlay h2 { font-size: 32px; color: #ff4444; letter-spacing: 3px; }
-  #overlay p { font-size: 18px; color: #fff; }
-  #overlay button {
-    margin-top: 8px;
-    padding: 12px 40px;
-    font-size: 16px;
-    font-family: inherit;
-    background: #3b82f6;
-    color: #fff;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: bold;
-    letter-spacing: 1px;
-  }
-  #overlay button:hover { background: #60a5fa; }
+  #overlay h2 { margin: 0 0 6px; font-size: 30px; color: #ff79c6; }
+  #overlay p { margin: 4px 0; color: #8be9fd; font-size: 14px; }
+  #overlay .sc { font-size: 20px; color: #f1fa8c; }
   .hidden { display: none !important; }
-  #playArea { display: flex; gap: 14px; align-items: flex-start; }
-  #sidePanel {
-    background: #1a1a2e;
-    border: 1px solid #2a2a4e;
-    border-radius: 6px;
-    padding: 12px 14px;
-    width: 180px;
-    flex-shrink: 0;
-  }
-  #sidePanel h3 {
-    font-size: 13px;
-    color: #888;
-    letter-spacing: 2px;
-    margin-bottom: 12px;
-    border-bottom: 1px solid #2a2a4e;
-    padding-bottom: 8px;
-  }
-  .opt {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: #ccc;
-    cursor: pointer;
-    padding: 6px 0;
-  }
-  .opt input { cursor: pointer; width: 16px; height: 16px; accent-color: #3b82f6; }
-  #controls { margin-top: 8px; font-size: 12px; color: #555; }
 </style>
 </head>
 <body>
-  <h1>INFINITE PANEL DE PON</h1>
-  <div id="hud">
-    <span>SCORE <b id="score">0</b></span>
-    <span>CHAIN <b id="chain">0</b></span>
-    <span>SPEED <b id="speed">1</b></span>
-    <span>GRID <b id="gridsize">6&times;12</b></span>
-  </div>
-  <div id="playArea">
-    <div id="gameWrapper">
-      <canvas id="game"></canvas>
-      <div id="overlay" class="hidden">
-        <h2>GAME OVER</h2>
-        <p>Final Score: <span id="finalScore">0</span></p>
-        <button id="restart">RESTART</button>
-      </div>
-    </div>
-    <div id="sidePanel">
-      <h3>OPTIONS</h3>
-      <label class="opt"><input type="checkbox" id="optSpeedLock"> Lock Speed</label>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="game" width="400" height="800"></canvas>
+    <div id="overlay" class="hidden">
+      <h2 id="ovTitle">PAUSED</h2>
+      <p id="ovLine1"></p>
+      <p id="ovLine2"></p>
     </div>
   </div>
-  <div id="controls">Arrow Keys: Move &nbsp;|&nbsp; Z / Space: Swap &nbsp;|&nbsp; X: Raise Row</div>
-
+  <div id="sidebar">
+    <div id="hud">
+      <h1>INFINITE<br>PANEL DE PON</h1>
+    <div class="row"><span class="lbl">SCORE</span><span class="val big" id="hScore">0</span></div>
+    <div class="row"><span class="lbl">SPEED</span><span class="val" id="hSpeed">1</span></div>
+    <div class="row"><span class="lbl">CHAIN</span><span class="val" id="hChain">-</span></div>
+    <div class="row"><span class="lbl">LONGEST CHAIN</span><span class="val" id="hMaxChain">-</span></div>
+    <div class="row"><span class="lbl">LARGEST COMBO</span><span class="val" id="hMaxCombo">-</span></div>
+    <div class="row"><span class="lbl">BLOCKS CLEARED</span><span class="val" id="hCleared">0</span></div>
+    <div class="row"><span class="lbl">GRID</span><span class="val" id="hGrid">6&times;12</span></div>
+    <div class="ctrl">
+      Arrows: move &nbsp; Z/Space: swap<br>
+      X/Shift: raise &nbsp; P: pause<br>
+      Enter: restart &nbsp; R: new game
+    </div>
+    </div>
+    <div id="stats">
+      <h2>stats</h2>
+      <div id="statsBody"><div class="sempty">no chains or combos yet</div></div>
+    </div>
+  </div>
+</div>
+<script src="engine.js"></script>
 <script>
 "use strict";
+/* ----------------------------------------------------------------------
+   7. CLIENT  (browser only) — rendering, input, game loop, expansion
+   ---------------------------------------------------------------------- */
 
-// ====================================================================
-//  ENGINE TIMING
-//  Every gameplay constraint is expressed as an ABSOLUTE number of
-//  milliseconds and driven by a high-precision delta-time accumulator
-//  sourced from performance.now(). Nothing is frame-counted, so the
-//  game behaves identically on 60 Hz / 144 Hz / 240 Hz displays.
-// ====================================================================
-let  TILE_SIZE = 40;            // dynamic — recomputed in resizeCanvas()
-const CANVAS_W = 400;           // fixed canvas dimensions
-const CANVAS_H = 800;
-const OFFBOARD_ROW_ALPHA = 0.12; // constant dim for the rising off-board row
+if (typeof document !== 'undefined') {
+
+// ---- visual config: 6 block colors with canvas symbols ----
 const COLORS = [
-  { symbol:'heart',    main:'#e8434c', light:'#ff6b73', dark:'#9a1b22' }, // Red
-  { symbol:'star',     main:'#facc15', light:'#fde047', dark:'#a16207' }, // Yellow
-  { symbol:'diamond',  main:'#3b82f6', light:'#60a5fa', dark:'#1e40a8' }, // Blue
-  { symbol:'triangle', main:'#a855f7', light:'#c084fc', dark:'#6b21a8' }, // Purple
-  { symbol:'circle',   main:'#22c55e', light:'#4ade80', dark:'#15803d' }, // Green
-  { symbol:'square',   main:'#06b6d4', light:'#22d3ee', dark:'#0e7490' }, // Cyan
-];
-const THRESHOLDS = [
-  { score:0,     cols:6,  rows:12 },
-  { score:1000,  cols:7,  rows:13 },
-  { score:2500,  cols:8,  rows:14 },
-  { score:5000,  cols:9,  rows:15 },
-  { score:10000, cols:10, rows:16 },
+  null,
+  { name:'Red',    main:'#e8503a', light:'#ff8a78', symbol:'heart'    },
+  { name:'Yellow', main:'#f1c40f', light:'#ffe066', symbol:'star'     },
+  { name:'Blue',   main:'#3a8edc', light:'#74c4ff', symbol:'diamond'  },
+  { name:'Purple', main:'#9b59b6', light:'#cb9ae0', symbol:'triangle' },
+  { name:'Green',  main:'#2ecc70', main2:'#27ae60', light:'#74f2a8', symbol:'circle'  },
+  { name:'Cyan',   main:'#15a9b8', light:'#4fd9e8', symbol:'square'   },
 ];
 
-// ---- absolute-millisecond engine constants ----
-const MS = {
-  // 1. Cursor & input mechanics
-  CURSOR_SHIFT:      16.67,   // single-press traversal of one grid slot
-  DAS_INITIAL:       200.00,  // continuous hold before auto-shift activates
-  DAS_REPEAT:        50.00,   // auto-shift interval once DAS is active
-  SWAP_INPUT_BUFFER: 16.67,   // directional inputs buffered this long after a swap
+// Board expansion: COLUMNS ONLY (never rows). Height is fixed at BASE_ROWS.
+// Columns grow with score, infinitely — the first column (6→7) arrives at
+// 2500, then each subsequent threshold follows T(n+1) = ratio*T(n) + 2500.
+// The ratio is 1.5x up to width 12, then drops to 1.25x beyond to slow growth.
+//   Phase 1 (width 7..12): closed form T = 7500*1.5^n - 5000
+//   Phase 2 (width 13+):   continues from threshold[12] at 1.25x + 2500
+const BASE_COLS = 6;
+const BASE_ROWS = 12;
+const EXPAND_BASE_SCORE = 2500;
+const EXPAND_RATIO = 1.5;
+const EXPAND_RATIO_SLOW = 1.25;
+const EXPAND_SLOW_COL = 12;                                 // switch ratio past this width
+const EXPAND_OFFSET = EXPAND_BASE_SCORE / (EXPAND_RATIO - 1);        // 5000
+const EXPAND_OFFSET_SLOW = EXPAND_BASE_SCORE / (EXPAND_RATIO_SLOW - 1); // 10000
+const EXPAND_T_AT_SLOW = (EXPAND_BASE_SCORE + EXPAND_OFFSET) * Math.pow(EXPAND_RATIO, EXPAND_SLOW_COL - BASE_COLS) - EXPAND_OFFSET;  // threshold[12] = 51954
+const EXPAND_SCALE_SLOW = EXPAND_T_AT_SLOW + EXPAND_OFFSET_SLOW;
+function colsForScore(score) {
+  if (score < EXPAND_BASE_SCORE) return BASE_COLS;
+  if (score < EXPAND_T_AT_SLOW) {
+    // Phase 1: widths 7..12 at 1.5x + 2500
+    return BASE_COLS + 1 + Math.floor(Math.log((score + EXPAND_OFFSET) / (EXPAND_BASE_SCORE + EXPAND_OFFSET)) / Math.log(EXPAND_RATIO));
+  }
+  // Phase 2: widths 13+ at 1.25x + 2500, continuing from threshold[12]
+  return EXPAND_SLOW_COL + Math.floor(Math.log((score + EXPAND_OFFSET_SLOW) / EXPAND_SCALE_SLOW) / Math.log(EXPAND_RATIO_SLOW));
+}
 
-  // 2. Panel swap physics
-  SWAP_DURATION:     66.67,   // full swap animation duration
-  SWAP_INTERRUPT:    50.00,   // earliest point a moving panel may be swapped again (mid-air)
-  FALL_PER_ROW:      16.67,   // time for a panel to drop exactly one row
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let CW = canvas.width, CH = canvas.height;
+// Tiles are a fixed size derived from the (constant) canvas height. The canvas
+// WIDTH grows with the column count so panels never shrink as the board widens.
+const TILE = Math.floor(CH / (BASE_ROWS + 1));
 
-  // 3. Match processing & clear lifecycle
-  MATCH_CHECK_DELAY: 150.00,  // grid pause immediately on alignment detection
-  FLASH:             266.67,  // simultaneous white flash of all matched panels
-  WINCE:             166.67,  // wince / face phase
-  POP_PER_PANEL:     66.67,   // sequential pop, one panel at a time (L→R, T→B)
+let stack = null;
+let paused = false;
+let gameStarted = false;
+let lastInput = {};
+let acc = 0;                 // fixed-step accumulator
+let lastT = 0;
 
-  // 4. Hover, gravity & chain timing
-  HOVER_BASE:        400.00,  // baseline hover before gravity applies
-  HOVER_L1:          466.67,  // hover at Speed Level 1
-  HOVER_L10:         233.33,  // hover at Speed Level 10
-  HOVER_MAX:         100.00,  // hover at Max Speed Level
-  CHAIN_FREEZE_2:    733.33,  // board freeze on a 2× chain
-  CHAIN_FREEZE_5:    1266.67, // board freeze on a 5× chain
+// Classic Easy is the only game mode. Game ends when blocks reach the top.
+const PRESET = CLASSIC_ENDLESS_PRESETS['classic-easy'];
 
-  // 5. Manual stack raising
-  MANUAL_RAISE:      166.67,  // scroll animation + full swap lockout window
+function gridDims() {
+  return { cols: stack.width, rows: BASE_ROWS };
+}
+
+function newGame() {
+  stack = new Stack({ width: BASE_COLS, height: BASE_ROWS, levelData: PRESET, seed: (Math.random()*1e9)|0 });
+  stack.startingState(7);
+  stack.input_state = {};
+  gameStarted = true; paused = false;
+  acc = 0; lastT = 0;
+  expansionFx = null;            // cancel any in-progress expansion transition
+  // size the canvas to the starting column count
+  canvas.width = TILE * BASE_COLS;
+  CW = canvas.width;
+  hideOverlay();
+  updateHUD();
+}
+
+// Board expansion transition: when colsForScore wants more columns, we don't
+// grow instantly — a ~2s lightning effect plays at the board's right edge,
+// THEN the new column(s) appear. During the transition the board keeps its
+// old width so gameplay is undisturbed.
+let expansionFx = null;   // { frame, total, targetCols }
+const EXPAND_FX_FRAMES = 120;
+
+function expandIfNeeded() {
+  // If a transition is in progress, tick it and finalize when complete.
+  if (expansionFx) {
+    expansionFx.frame++;
+    if (expansionFx.frame >= expansionFx.total) {
+      const target = expansionFx.targetCols;
+      expansionFx = null;
+      doExpand(target);
+    }
+    return;
+  }
+  const want = colsForScore(stack.score);
+  if (want === stack.width) return;
+  // Start the lightning transition instead of growing instantly.
+  expansionFx = { frame: 0, total: EXPAND_FX_FRAMES, targetCols: want };
+}
+
+function doExpand(target) {
+  // grow columns: append a panel to every existing row (incl. buffer).
+  for (let r = 0; r < stack.panels.length; r++) {
+    for (let c = stack.width; c < target; c++) {
+      const p = stack._newPanel(r, c);
+      // populate the rising/incoming row (row 0) with a random block so the
+      // new column doesn't look empty. Match the 'dimmed' incoming state.
+      if (r === 0) {
+        p.color = 1 + ((Math.random() * stack.levelData.colorCount) | 0);
+        p.state = 'dimmed';
+      }
+      stack.panels[r][c] = p;
+    }
+  }
+  stack.width = target;
+  // grow the canvas width to fit the wider board (tiles stay fixed size)
+  canvas.width = TILE * target;
+  CW = canvas.width;
+  // keep cursor in bounds (cursor spans 2 columns, so max col = width-2)
+  stack.cur_col = bound(0, stack.cur_col, stack.width - 2);
+}
+
+// ---- input ----
+const KEYS = {
+  ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right',
+  KeyW:'up', KeyS:'down', KeyA:'left', KeyD:'right',
+  KeyZ:'swap', Space:'swap', KeyX:'raise', ShiftLeft:'raise', ShiftRight:'raise',
 };
-const ROWS_PER_SEC = 1000 / MS.FALL_PER_ROW;        // 60 rows / second
-function fallSpeedPxPerSec(){ return TILE_SIZE * ROWS_PER_SEC; }
-
-// board rise is decoupled from refresh rate too (px/s)
-const RISE_BASE_SPEED = 5;       // px / second
-const RISE_INCREMENT  = 1.25;    // px / second per speed-level
-const RISE_LEVEL_STEP = 500;     // score points per speed-level
-const MAX_RISE_LEVEL  = 40;
-
-// roundRect polyfill for older browsers
-if (!CanvasRenderingContext2D.prototype.roundRect) {
-  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
-    r = Math.min(r, w/2, h/2);
-    this.beginPath();
-    this.moveTo(x+r,y);
-    this.arcTo(x+w,y,x+w,y+h,r);
-    this.arcTo(x+w,y+h,x,y+h,r);
-    this.arcTo(x,y+h,x,y,r);
-    this.arcTo(x,y,x+w,y,r);
-    this.closePath();
-  };
-}
-
-// ===================== STATE =====================
-let canvas, ctx;
-let cols, rows;
-let grid;            // grid[col][row]  → tile-object or null
-let nextRow;         // nextRow[col]    → tile-object (hidden incoming row)
-let cursorCol, cursorRow;
-let cursorFromCol, cursorFromRow;   // visual interpolation source
-let cursorShiftMs;                  // 0..MS.CURSOR_SHIFT visual cursor traversal
-let score, currentChain, riseSpeedLevel;
-let speedLocked = false;      // option: freeze rise speed at its current level
-let speedLockLevel = 0;       // captured level when the lock is engaged
-let riseProgress;            // 0 … TILE_SIZE
-let state;                   // see STATE_MACHINE below
-let phaseTimer;              // ms accumulated/remaining in current phase
-let lastTime;
-let needsMatchCheck;
-let currentThresholdIdx;
-let expandMsgTimer, chainMsgTimer;
-let expandAnimT;             // 0-1 expansion visual transition
-let gridOffsetY;             // vertical centering offset for grid within fixed canvas
-
-// input
-let keys;                    // {left,right,up,down}
-let dasDir;                  // currently DAS-tracked direction | null
-let dasHoldMs;               // continuous hold time toward DAS_INITIAL
-let dasActive;               // auto-shift armed
-let dasRepeatMs;             // time toward next DAS_REPEAT shift
-let swapBufferMs;            // directional input lockout after a swap
-let bufferedDir;             // direction queued during the swap-buffer window
-
-// swap animation
-let activeSwap;              // { t } elapsed ms, or null
-// match lifecycle data
-let matchList;               // ordered [{c,r}] top→bottom, left→right
-let popCount;                // how many panels have popped so far
-// manual raise
-let manualRaise;             // true while an X-key fast raise is in progress
-let raiseLockMs;             // swap lockout remaining during a manual raise
-
-// --------------------------------------------------------------------
-//  STATE MACHINE
-//   'playing'      normal play: rise + input + swap
-//   'chainfreeze'  board frozen for skill-chain inputs (currentChain>=2)
-//   'matchdelay'   MATCH_CHECK_DELAY pause on alignment
-//   'flash'        FLASH phase — all matched panels white
-//   'wince'        WINCE phase — wince face
-//   'popping'      sequential POP_PER_PANEL per panel
-//   'hover'        unsupported panels hover HOVER delay then fall
-//   'falling'      gravity; on settle → match(chain) or back to playing
-//   'gameover'
-// --------------------------------------------------------------------
-
-// ===================== TILE FACTORY =====================
-function makeTile(color){
-  return { color, vy:0, sx:0, matched:false, cleared:false };
-}
-// a tile that is solid but immovable — blocks gravity/swap like a pillar
-function isLocked(tile){ return tile && (tile.matched || tile.cleared); }
-
-// ===================== TIMING HELPERS =====================
-// hover delay scaled by current speed level (1-indexed display level)
-function hoverDelayMs(){
-  let L = riseSpeedLevel + 1;
-  if(L <= 1)  return MS.HOVER_L1;
-  if(L <= 10) return MS.HOVER_L1 + (MS.HOVER_L10 - MS.HOVER_L1) * (L - 1) / 9;
-  let maxL = MAX_RISE_LEVEL + 1;
-  let v = MS.HOVER_L10 + (MS.HOVER_MAX - MS.HOVER_L10) * (L - 10) / (maxL - 10);
-  return Math.max(MS.HOVER_MAX, v);
-}
-// chain freeze interpolated from the 2× / 5× anchor points
-function chainFreezeMs(level){
-  if(level < 2) return 0;
-  let slope = (MS.CHAIN_FREEZE_5 - MS.CHAIN_FREEZE_2) / (5 - 2); // ms per chain level
-  return MS.CHAIN_FREEZE_2 + (level - 2) * slope;
-}
-
-// registers the scorechange hook: pops the HUD score text on every award.
-function setupScoreHook(){
-  let el = document.getElementById('score');
-  let t = null;
-  document.addEventListener('scorechange', () => {
-    el.classList.remove('pop');
-    void el.offsetWidth;                 // force reflow to restart the transition
-    el.classList.add('pop');
-    if(t) clearTimeout(t);
-    t = setTimeout(() => el.classList.remove('pop'), 180);
-  });
-}
-
-// wires up the options panel toggles
-function setupOptions(){
-  let lockEl = document.getElementById('optSpeedLock');
-  lockEl.addEventListener('change', () => {
-    if(lockEl.checked){
-      speedLocked = true;
-      speedLockLevel = riseSpeedLevel;   // freeze at current level
+// Swap is EDGE-TRIGGERED: fires once per key-down, NOT while held. A held key
+// on a keyboard spans many fixed-timestep frames; level-triggering (the
+// authentic Lua model, designed for per-frame lockstep input) would fire a
+// swap every ~2 frames — the "double swap" bug. Only a fresh keypress counts.
+let swapKeyDown = false;   // is the swap key physically down right now?
+let swapEdge = false;      // edge flag: set on key-down, cleared when consumed
+window.addEventListener('keydown', e => {
+  if (e.code === 'KeyP') { paused = !paused; (paused?showOverlay:hideOverlay)('PAUSED'); e.preventDefault(); return; }
+  if (e.code === 'Enter') { newGame(); e.preventDefault(); return; }
+  if (e.code === 'KeyR') { newGame(); e.preventDefault(); return; }
+  const k = KEYS[e.code];
+  if (k) {
+    if (k === 'swap') {
+      if (!swapKeyDown) swapEdge = true;   // only the initial press, not auto-repeat
+      swapKeyDown = true;
     } else {
-      speedLocked = false;
+      lastInput[k] = true;
     }
-  });
-}
-
-// ===================== INIT / RESET =====================
-function init(){
-  canvas = document.getElementById('game');
-  ctx = canvas.getContext('2d');
-  resetGame();
-  setupInput();
-  setupOptions();
-  setupScoreHook();
-  requestAnimationFrame(loop);
-}
-
-function resetGame(){
-  cols = 6; rows = 12;
-  score = 0; currentChain = 1; riseSpeedLevel = 0;
-  speedLockLevel = 0;       // fresh game starts at base speed even if locked
-  riseProgress = 0; state = 'playing'; phaseTimer = 0;
-  needsMatchCheck = false; currentThresholdIdx = 0;
-  expandMsgTimer = 0; chainMsgTimer = 0; expandAnimT = 0;
-  lastTime = 0;
-  cursorCol = Math.floor(cols/2)-1;
-  cursorRow = Math.floor(rows/2);
-  cursorFromCol = cursorCol; cursorFromRow = cursorRow;
-  cursorShiftMs = MS.CURSOR_SHIFT;
-  keys = { left:false, right:false, up:false, down:false };
-  dasDir = null; dasHoldMs = 0; dasActive = false; dasRepeatMs = 0;
-  swapBufferMs = 0; bufferedDir = null;
-  activeSwap = null;
-  matchList = []; popCount = 0;
-  manualRaise = false; raiseLockMs = 0;
-  scoreFlash = 0;
-  generateBoard();
-  resizeCanvas();
-  document.getElementById('overlay').classList.add('hidden');
-}
-
-function resizeCanvas(){
-  canvas.width  = CANVAS_W;
-  canvas.height = CANVAS_H;
-  TILE_SIZE = Math.min(CANVAS_W / cols, CANVAS_H / rows);
-  gridOffsetY = (CANVAS_H - rows * TILE_SIZE) / 2;
-}
-
-// ===================== BOARD GENERATION =====================
-function generateBoard(){
-  grid = [];
-  for (let c=0;c<cols;c++) grid.push(new Array(rows).fill(null));
-
-  let startRow = Math.ceil(rows*0.42);          // bottom ~58 % filled
-  for (let c=0;c<cols;c++){
-    for (let r=startRow;r<rows;r++){
-      let avail = [0,1,2,3,4];
-      if (c>=2 && grid[c-1][r] && grid[c-2][r] &&
-          grid[c-1][r].color===grid[c-2][r].color)
-        avail = avail.filter(x=>x!==grid[c-1][r].color);
-      if (r>=2 && grid[c][r-1] && grid[c][r-2] &&
-          grid[c][r-1].color===grid[c][r-2].color)
-        avail = avail.filter(x=>x!==grid[c][r-1].color);
-      grid[c][r] = makeTile(avail[Math.floor(Math.random()*avail.length)]);
-    }
-  }
-  nextRow = [];
-  for (let c=0;c<cols;c++)
-    nextRow.push(makeTile(Math.floor(Math.random()*COLORS.length)));
-}
-
-// ===================== INPUT =====================
-function setupInput(){
-  const keyMap = { ArrowLeft:'left', ArrowRight:'right', ArrowUp:'up', ArrowDown:'down' };
-  document.addEventListener('keydown', e=>{
-    if(state==='gameover') return;
-    // swap
-    if(e.key==='z' || e.key==='Z' || e.key===' '){ e.preventDefault(); doSwap(); return; }
-    // manual raise
-    if(e.key==='x' || e.key==='X'){
-      e.preventDefault();
-      if(state==='playing' && !manualRaise && raiseLockMs<=0){
-        manualRaise = true; raiseLockMs = MS.MANUAL_RAISE;
-      }
-      return;
-    }
-    let dir = keyMap[e.key];
-    if(!dir) return;
     e.preventDefault();
-    // ignore native OS key-repeat: only the initial press registers a tap
-    if(keys[dir]) return;
-    // a new directional press takes over DAS tracking
-    keys.left = keys.right = keys.up = keys.down = false;
-    keys[dir] = true;
-    dasDir = dir; dasHoldMs = 0; dasActive = false; dasRepeatMs = 0;
-    // instant single tap (buffered if we're inside the swap window)
-    if(swapBufferMs > 0) bufferedDir = dir;
-    else shiftCursor(dir);
-  });
-  document.addEventListener('keyup', e=>{
-    let dir = keyMap[e.key];
-    if(!dir) return;
-    keys[dir] = false;
-    if(dasDir === dir){ dasDir = null; dasActive = false; }
-  });
-  document.getElementById('restart').addEventListener('click', resetGame);
-}
-
-function shiftCursor(dir){
-  let nc = cursorCol, nr = cursorRow;
-  if(dir==='left'  && cursorCol>0)      nc = cursorCol-1;
-  else if(dir==='right' && cursorCol<cols-2) nc = cursorCol+1;
-  else if(dir==='up'    && cursorRow>0)      nr = cursorRow-1;
-  else if(dir==='down'  && cursorRow<rows-1) nr = cursorRow+1;
-  else return;
-  if(nc!==cursorCol || nr!==cursorRow){
-    cursorFromCol = cursorCol; cursorFromRow = cursorRow;
-    cursorCol = nc; cursorRow = nr;
-    cursorShiftMs = 0;   // begin the 16.67 ms traversal animation
   }
+});
+window.addEventListener('keyup', e => {
+  const k = KEYS[e.code];
+  if (k) {
+    if (k === 'swap') swapKeyDown = false;
+    lastInput[k] = false;
+    e.preventDefault();
+  }
+});
+
+// ---- fixed-timestep loop ----
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if (!lastT) lastT = ts;
+  let dt = ts - lastT; lastT = ts;
+  if (dt > 250) dt = 250;            // avoid spiral after tab-switch
+  if (!gameStarted || paused || !stack) { render(); return; }
+
+  acc += dt;
+  const STEP = 1000 / 60;
+  let runs = 0;
+  while (acc >= STEP && runs < stack.max_runs_per_frame * 4) {
+    stepInput();
+    stack.run();
+    expandIfNeeded();
+    acc -= STEP; runs++;
+    if (stack.game_over) { onGameOver(); break; }
+  }
+  if (acc > STEP * (stack.max_runs_per_frame * 4)) acc = 0; // shed backlog
+  updateHUD();
+  render();
 }
 
-// processed every update tick — drives DAS, the swap buffer, and the
-// visual cursor traversal. Entirely ms-driven, never frame-counted.
-function updateInput(dtMs){
-  // flush the swap input buffer after MS.SWAP_INPUT_BUFFER
-  if(swapBufferMs > 0){
-    swapBufferMs -= dtMs;
-    if(swapBufferMs <= 0){
-      swapBufferMs = 0;
-      if(bufferedDir){ shiftCursor(bufferedDir); bufferedDir = null; }
+function stepInput() {
+  stack.input_state = {
+    up: !!lastInput.up, down: !!lastInput.down, left: !!lastInput.left, right: !!lastInput.right,
+    swap: swapEdge,        // edge-triggered: true for exactly one step per keypress
+    raise: !!lastInput.raise,
+  };
+  swapEdge = false;        // consume — held key produces no further swaps
+}
+
+function onGameOver() {
+  showOverlay('GAME OVER', 'Score ' + stack.score, 'Press Enter or R to restart');
+}
+
+// ---- HUD ----
+function el(id){ return document.getElementById(id); }
+function updateHUD() {
+  if (!stack) return;
+  el('hScore').textContent = stack.score;
+  el('hSpeed').textContent = stack.speed;
+  el('hChain').textContent = stack.chain_counter > 0 ? 'x' + stack.chain_counter : '-';
+  el('hMaxChain').textContent = stack.max_chain > 0 ? 'x' + stack.max_chain : '-';
+  el('hMaxCombo').textContent = stack.max_combo > 0 ? stack.max_combo : '-';
+  el('hCleared').textContent = stack.panels_cleared;
+  el('hGrid').textContent = stack.width + '\u00d7' + stack.height;
+  updateStats();
+}
+
+function updateStats() {
+  const ct = stack.chain_tally, mt = stack.combo_tally;
+  let html = '';
+  const chainKeys = Object.keys(ct).map(Number).filter(k => ct[k] > 0).sort((a, b) => a - b);
+  if (chainKeys.length) {
+    html += '<div class="sthead">chains</div>';
+    for (const k of chainKeys) html += '<div class="srow"><span>' + k + 'x</span><span>' + ct[k] + '</span></div>';
+  }
+  const comboKeys = Object.keys(mt).map(Number).filter(k => mt[k] > 0).sort((a, b) => a - b);
+  if (comboKeys.length) {
+    html += '<div class="sthead">combos</div>';
+    for (const k of comboKeys) html += '<div class="srow"><span>' + k + '</span><span>' + mt[k] + '</span></div>';
+  }
+  el('statsBody').innerHTML = html || '<div class="sempty">no chains or combos yet</div>';
+}
+function showOverlay(title, l1, l2) {
+  el('ovTitle').textContent = title;
+  el('ovLine1').textContent = l1 || ''; el('ovLine1').className = l1 ? '' : 'hidden';
+  el('ovLine2').textContent = l2 || ''; el('ovLine2').className = l2 ? '' : 'hidden';
+  el('overlay').classList.remove('hidden');
+}
+function hideOverlay(){ el('overlay').classList.add('hidden'); }
+
+// ---- rendering ----
+function render() {
+  ctx.clearRect(0, 0, CW, CH);
+  if (!stack) return;
+  const dims = { cols: stack.width, rows: stack.height };
+  const tile = Math.floor(Math.min(CW / dims.cols, CH / (dims.rows + 1)));
+  const gridW = tile * dims.cols, gridH = tile * dims.rows;
+  const ox = Math.floor((CW - gridW) / 2);
+  const oy = Math.floor(CH - gridH - tile);   // reserve one tile at bottom for the dimmed spawn buffer
+
+  // rise offset: stack sinks (displacement/16)*tile then rises to 0
+  const riseOff = (stack.displacement / 16) * tile;
+
+  ctx.save();
+  ctx.translate(ox, oy + riseOff);
+
+  // play area background (+ spawn buffer strip below the play rows)
+  ctx.fillStyle = '#0b0d18';
+  ctx.fillRect(0, -tile, gridW, gridH + tile * 2);
+
+  // draw panels row 1..height (+ any overflow rows)
+  const maxRow = stack.panels.length - 1;
+  for (let r = 1; r <= maxRow; r++) {
+    for (let c = 0; c < stack.width; c++) {
+      const p = stack.panels[r][c];
+      if (p.color === 0) continue;
+      // y grows downward; row 1 is the bottom. y = gridH - r*tile
+      const x = c * tile;
+      const y = gridH - r * tile;
+      drawPanel(p, x, y, tile);
     }
   }
-  // DAS auto-shift (only outside the swap buffer window)
-  if(swapBufferMs <= 0 && dasDir){
-    dasHoldMs += dtMs;
-    if(!dasActive){
-      if(dasHoldMs >= MS.DAS_INITIAL){ dasActive = true; dasRepeatMs = 0; }
-    } else {
-      dasRepeatMs += dtMs;
-      while(dasRepeatMs >= MS.DAS_REPEAT){
-        dasRepeatMs -= MS.DAS_REPEAT;
-        shiftCursor(dasDir);
+  // spawn buffer row 0 = the incoming row, not yet in play. Heavily dimmed
+  // (keyed to its 'dimmed' state); snaps to full alpha the instant it rises
+  // into play (row 1, state flips to 'normal'). No gradual undim.
+  for (let c = 0; c < stack.width; c++) {
+    const p = stack.panels[0][c];
+    if (p.color === 0) continue;
+    const x = c * tile, y = gridH;
+    const incoming = p.state === 'dimmed';
+    ctx.globalAlpha = incoming ? 0.12 : 1;
+    drawPanel(p, x, y, tile);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+
+  // loss-threshold bar: STATIC white line marking where game over triggers.
+  // The topmost block's top edge reaches screen y = oy + TILE when new_row()
+  // fires and pushes it into the top play row (row 12). Drawn outside the
+  // rise-offset translate so it never moves.
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.fillRect(ox, oy + tile - 1, gridW, 2);
+
+  // expansion lightning transition: crackling energy at the board's right edge
+  // where the new column(s) will appear.
+  if (expansionFx) drawExpansionFx(ox, oy, gridW, gridH, tile);
+
+  // cursor (2 tiles wide)
+  const cc = stack.cur_col, cr = stack.cur_row;
+  const cx = ox + cc * tile;
+  const cy = oy + riseOff + gridH - cr * tile;
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
+  ctx.strokeRect(cx + 1, cy + 1, tile * 2 - 2, tile - 2);
+
+  // danger flash when topped out
+  if (stack.wasToppedOut) {
+    ctx.fillStyle = 'rgba(255,60,60,0.10)';
+    ctx.fillRect(0, 0, CW, CH);
+  }
+}
+
+// ---- expansion lightning effect ----
+// Plays when the board is about to widen. Crackling bolts run down the right
+// edge of the board plus a bright flash that peaks as the column appears.
+function drawExpansionFx(ox, oy, gridW, gridH, tile) {
+  const fx = expansionFx;
+  const t = fx.frame / fx.total;                 // 0..1 progress
+  const x = ox + gridW;                          // right edge of current board
+  const top = oy - tile;                         // include spawn-buffer strip
+  const bottom = oy + gridH;
+
+  // intensity bell curve: ramps up, peaks near the end, then the column pops in
+  let intensity = Math.sin(t * Math.PI);          // 0 -> 1 -> 0
+  // final flash on the last few frames for the "appearance" beat
+  if (t > 0.82) intensity = Math.max(intensity, 1.0);
+  // per-frame flicker so the bolts feel alive
+  const flicker = 0.55 + Math.random() * 0.45;
+  const a = Math.min(1, intensity * flicker);
+
+  // whole-board flash overlay (bright at the right edge, fading left)
+  const grad = ctx.createLinearGradient(x - tile * 3, 0, x, 0);
+  grad.addColorStop(0, 'rgba(150,200,255,0)');
+  grad.addColorStop(1, 'rgba(180,220,255,' + (a * 0.35).toFixed(3) + ')');
+  ctx.fillStyle = grad;
+  ctx.fillRect(x - tile * 3, top, tile * 3, bottom - top);
+
+  ctx.save();
+  ctx.shadowColor = '#8be9fd';
+  ctx.shadowBlur = 16;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // a few jagged bolts running down the seam, regenerating each frame
+  const nBolts = 2 + ((Math.random() * 2) | 0);
+  for (let b = 0; b < nBolts; b++) {
+    const bx = x + (Math.random() - 0.5) * tile * 0.6;
+    ctx.strokeStyle = 'rgba(220,240,255,' + (a * (0.6 + Math.random() * 0.4)).toFixed(3) + ')';
+    ctx.lineWidth = 1.5 + Math.random() * 2.5;
+    drawLightningBolt(bx, top, bottom, tile);
+  }
+
+  // bright core seam line
+  ctx.strokeStyle = 'rgba(255,255,255,' + a.toFixed(3) + ')';
+  ctx.lineWidth = 2 + intensity * 2;
+  ctx.beginPath();
+  ctx.moveTo(x, top);
+  ctx.lineTo(x, bottom);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// one jagged vertical lightning bolt with random horizontal jitter + branches
+function drawLightningBolt(x, top, bottom, tile) {
+  const segs = 10;
+  const step = (bottom - top) / segs;
+  const jitter = tile * 0.35;
+  ctx.beginPath();
+  ctx.moveTo(x, top);
+  let px = x;
+  for (let i = 1; i <= segs; i++) {
+    px = x + (Math.random() - 0.5) * jitter;
+    ctx.lineTo(px, top + step * i);
+  }
+  ctx.stroke();
+  // a couple of short branches off the main bolt
+  for (let i = 0; i < 2; i++) {
+    const by = top + Math.random() * (bottom - top);
+    ctx.beginPath();
+    ctx.moveTo(x, by);
+    ctx.lineTo(x + (Math.random() - 0.5) * jitter * 1.6, by + (Math.random() - 0.3) * step * 1.5);
+    ctx.stroke();
+  }
+}
+
+function drawPanel(p, x, y, tile) {
+  const col = COLORS[p.color]; if (!col) return;
+  const pad = Math.max(1, Math.floor(tile * 0.06));
+  let bx = x + pad, by = y + pad, bw = tile - pad * 2, bh = tile - pad * 2;
+
+  // swap animation slide
+  if (p.state === 'swapping') {
+    const slide = (p.timer / 4) * tile * (p.isSwappingFromLeft ? -1 : 1);
+    bx += slide;
+  }
+
+  // state-based styling
+  let main = col.main, alpha = 1;
+  if (p.state === 'matched') {
+    const ft = p.frameTimes;
+    const total = ft.FLASH + ft.FACE + 1;
+    if (p.timer > ft.FACE) { main = '#ffffff'; }          // FLASH: white
+    else { main = '#7a2030'; }                            // FACE: distressed dark red
+  } else if (p.state === 'popping' || p.state === 'popped') {
+    alpha = Math.max(0, p.timer / (p.frameTimes.POP * (p.combo_size || 1)));
+    alpha = Math.max(0.1, alpha);
+  } else if (p.state === 'falling' || p.state === 'hovering') {
+    // subtle
+  } else if (p.state === 'landing') {
+    const sq = 1 - (p.timer / 12) * 0.12;
+    bh *= sq; by += (tile - pad * 2) * (1 - sq);
+  }
+
+  ctx.globalAlpha *= alpha;
+  roundRect(bx, by, bw, bh, Math.max(2, tile * 0.12));
+  ctx.fillStyle = main;
+  ctx.fill();
+  ctx.globalAlpha /= alpha;
+
+  // symbol (lighter shade), ~90% of tile
+  drawSymbol(col.symbol, bx, by, bw, bh, col.light);
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawSymbol(kind, x, y, w, h, color) {
+  const cx = x + w / 2, cy = y + h / 2;
+  const s = Math.min(w, h) * 0.42;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(2, s * 0.14);
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  switch (kind) {
+    case 'heart': {
+      const k = s;
+      ctx.moveTo(cx, cy + k * 0.85);
+      ctx.bezierCurveTo(cx - k * 1.4, cy - k * 0.2, cx - k * 0.5, cy - k, cx, cy - k * 0.25);
+      ctx.bezierCurveTo(cx + k * 0.5, cy - k, cx + k * 1.4, cy - k * 0.2, cx, cy + k * 0.85);
+      ctx.fill();
+      break;
+    }
+    case 'star': {
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        const rad = (i % 2 === 0) ? s : s * 0.45;
+        const px = cx + Math.cos(a) * rad, py = cy + Math.sin(a) * rad;
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
       }
+      ctx.closePath(); ctx.fill();
+      break;
     }
-  }
-  // visual cursor traversal toward the logical position
-  if(cursorShiftMs < MS.CURSOR_SHIFT)
-    cursorShiftMs = Math.min(MS.CURSOR_SHIFT, cursorShiftMs + dtMs);
-}
-
-function doSwap(){
-  // fully blocked during a manual raise scroll
-  if(raiseLockMs > 0) return;
-  // mid-air trick: a moving panel cannot be swapped again until SWAP_INTERRUPT
-  if(activeSwap && activeSwap.t < MS.SWAP_INTERRUPT) return;
-  let r = cursorRow, c = cursorCol;
-  if(c > cols-2) return;                       // need two adjacent columns
-  if(isLocked(grid[c][r]) || isLocked(grid[c+1][r])) return;
-  // logical swap
-  let a = grid[c][r], b = grid[c+1][r];
-  grid[c][r] = b; grid[c+1][r] = a;
-  // snap any in-flight swap, then start the new animation
-  for(let cc=0;cc<cols;cc++) for(let rr=0;rr<rows;rr++)
-    if(grid[cc][rr]) grid[cc][rr].sx = 0;
-  if(a) a.sx = -TILE_SIZE;   // a moved left→right slot: starts at its old slot
-  if(b) b.sx = +TILE_SIZE;   // b moved right→left slot: starts at its old slot
-  activeSwap = { t: 0 };
-  swapBufferMs = MS.SWAP_INPUT_BUFFER;
-  // match check fires when the swap animation completes
-}
-
-// advances the swap animation; on completion queues a match check
-function updateSwap(dtMs){
-  if(!activeSwap) return;
-  activeSwap.t += dtMs;
-  let p = Math.min(1, activeSwap.t / MS.SWAP_DURATION);
-  let mag = TILE_SIZE * (1 - p);
-  for(let c=0;c<cols;c++) for(let r=0;r<rows;r++){
-    let t = grid[c][r];
-    if(t && t.sx !== 0) t.sx = (t.sx>0 ? mag : -mag);
-  }
-  if(p >= 1){
-    for(let c=0;c<cols;c++) for(let r=0;r<rows;r++)
-      if(grid[c][r]) grid[c][r].sx = 0;
-    activeSwap = null;
-    needsMatchCheck = true;
-  }
-}
-
-// ===================== MATCH DETECTION =====================
-function findMatches(){
-  let matched=[];
-  for(let c=0;c<cols;c++) matched.push(new Array(rows).fill(false));
-
-  // horizontal
-  for(let r=0;r<rows;r++){
-    let c=0;
-    while(c<cols){
-      if(!grid[c][r] || isLocked(grid[c][r])){ c++; continue; }
-      let clr=grid[c][r].color, end=c+1;
-      while(end<cols && grid[end][r] && !isLocked(grid[end][r]) &&
-            grid[end][r].color===clr) end++;
-      if(end-c>=3) for(let i=c;i<end;i++) matched[i][r]=true;
-      c=end;
+    case 'diamond': {
+      ctx.moveTo(cx, cy - s); ctx.lineTo(cx + s * 0.8, cy);
+      ctx.lineTo(cx, cy + s); ctx.lineTo(cx - s * 0.8, cy); ctx.closePath();
+      ctx.fill();
+      break;
     }
-  }
-  // vertical
-  for(let c=0;c<cols;c++){
-    let r=0;
-    while(r<rows){
-      if(!grid[c][r] || isLocked(grid[c][r])){ r++; continue; }
-      let clr=grid[c][r].color, end=r+1;
-      while(end<rows && grid[c][end] && !isLocked(grid[c][end]) &&
-            grid[c][end].color===clr) end++;
-      if(end-r>=3) for(let i=r;i<end;i++) matched[c][i]=true;
-      r=end;
+    case 'triangle': {
+      ctx.moveTo(cx, cy - s);
+      ctx.lineTo(cx + s * 0.9, cy + s * 0.75);
+      ctx.lineTo(cx - s * 0.9, cy + s * 0.75); ctx.closePath();
+      ctx.fill();
+      break;
     }
-  }
-  let count=0;
-  for(let c=0;c<cols;c++)for(let r=0;r<rows;r++) if(matched[c][r]) count++;
-  return { matched, count };
-}
-
-// ===================== SCORING ENGINE =====================
-// Hook: whenever score changes, a 'scorechange' CustomEvent fires on
-// document so the UI layer can react (score text pop). addScore() is the
-// single mutation point — never write to `score` directly elsewhere.
-let scoreFlash;   // 0..1 visual pop triggered by the scorechange hook
-function addScore(amount){
-  if(amount <= 0) return;
-  score += amount;
-  scoreFlash = 1;
-  document.dispatchEvent(new CustomEvent('scorechange', {
-    detail: { score, delta: amount, chain: currentChain }
-  }));
-}
-
-// Simultaneous Clears (Combos): flat bonus by unique panels cleared at one
-// instant. 3 panels = baseline (0). Beyond 8: Score = 70 + ((Panels-8)*10).
-function comboScore(panels){
-  if(panels <= 3) return 0;
-  if(panels === 4) return 20;
-  if(panels === 5) return 30;
-  if(panels === 6) return 50;
-  if(panels === 7) return 60;
-  if(panels === 8) return 70;
-  return 70 + (panels - 8) * 10;
-}
-
-// Consecutive Clears (Chains): reward by current chain multiplier level.
-// NO hard cap — scales infinitely past the lookup table. For N >= 14 every
-// chain-level step is worth 1800: chainScore(N) = 1800 * (N - 13).
-function chainScore(level){
-  if(level <= 1) return 0;          // baseline match, no active chain
-  const table = [0,0,50,80,150,300,400,500,700,900,1100,1300,1500,1800];
-  if(level <= 13) return table[level];
-  return 1800 * (level - 12);       // N >= 14: 1800 per step, no plateau
-}
-
-// ===================== MATCH LIFECYCLE =====================
-// beginMatch evaluates combo + chain score and arms the lifecycle. The
-// caller increments currentChain for gravity chains BEFORE calling this
-// (see the 'falling' branch). A swap/raise match scores at currentChain
-// as-is (1 = baseline, no chain bonus).
-function beginMatch(result){
-  let earned = comboScore(result.count) + chainScore(currentChain);
-  addScore(earned);
-
-  // ordered pop list: top-to-bottom, then left-to-right
-  matchList = [];
-  for(let r=0;r<rows;r++)
-    for(let c=0;c<cols;c++)
-      if(result.matched[c][r]){
-        grid[c][r].matched = true;
-        matchList.push({c, r});
-      }
-  popCount = 0;
-  if(currentChain >= 2) chainMsgTimer = 1.6;
-
-  if(currentChain >= 2){
-    state = 'chainfreeze';
-    phaseTimer = chainFreezeMs(currentChain);
-  } else {
-    enterMatchLifecycle();
-  }
-}
-
-function enterMatchLifecycle(){
-  state = 'matchdelay';
-  phaseTimer = 0;
-}
-
-// drives matchdelay → flash → wince → popping using accumulated ms
-function updateMatchLifecycle(dtMs){
-  phaseTimer += dtMs;
-  if(state === 'matchdelay'){
-    if(phaseTimer >= MS.MATCH_CHECK_DELAY){ state='flash'; phaseTimer=0; }
-  } else if(state === 'flash'){
-    if(phaseTimer >= MS.FLASH){ state='wince'; phaseTimer=0; }
-  } else if(state === 'wince'){
-    if(phaseTimer >= MS.WINCE){ state='popping'; phaseTimer=0; }
-  } else if(state === 'popping'){
-    // sequential explosion: one panel per POP_PER_PANEL, L→R / T→B
-    let target = Math.floor(phaseTimer / MS.POP_PER_PANEL);
-    while(popCount < matchList.length && popCount < target){
-      let m = matchList[popCount];
-      if(grid[m.c] && grid[m.c][m.r]) grid[m.c][m.r].cleared = true; // vanish (ghost)
-      popCount++;
+    case 'circle': {
+      ctx.arc(cx, cy, s, 0, Math.PI * 2); ctx.fill();
+      break;
     }
-    let totalPop = matchList.length * MS.POP_PER_PANEL;
-    if(phaseTimer >= totalPop) finishClear();
-  }
-}
-
-function finishClear(){
-  // remove all matched/cleared panels
-  for(let c=0;c<cols;c++) for(let r=0;r<rows;r++)
-    if(grid[c][r] && (grid[c][r].matched || grid[c][r].cleared)) grid[c][r] = null;
-  matchList = [];
-  // unsupported panels hover before gravity (post-clear hover rule)
-  if(hasFloating()){
-    state = 'hover';
-    phaseTimer = 0;
-  } else {
-    currentChain = 1;   // queue empty (nothing left to fall) → reset multiplier
-    state = 'playing';
-    needsMatchCheck = false;
-  }
-}
-
-// ===================== GRAVITY =====================
-function applyGravity(){
-  for(let c=0;c<cols;c++){
-    let writeRow = rows-1;
-    for(let r=rows-1;r>=0;r--){
-      if(grid[c][r]){
-        if(isLocked(grid[c][r])){
-          writeRow = r - 1;          // matched/cleared tiles are fixed pillars
-        } else {
-          if(writeRow !== r){
-            grid[c][writeRow] = grid[c][r];
-            grid[c][writeRow].vy += (writeRow - r) * TILE_SIZE;
-            grid[c][r] = null;
-          }
-          writeRow--;
-        }
-      }
-    }
-  }
-}
-
-function updateFallAnimations(dt){
-  let sp = fallSpeedPxPerSec();
-  for(let c=0;c<cols;c++) for(let r=0;r<rows;r++){
-    let t = grid[c][r];
-    if(t && t.vy > 0){ t.vy -= sp*dt; if(t.vy < 0) t.vy = 0; }
-  }
-}
-
-function allSettled(){
-  for(let c=0;c<cols;c++) for(let r=0;r<rows;r++)
-    if(grid[c][r] && grid[c][r].vy > 0) return false;
-  return true;
-}
-
-// true if any free tile has an empty space below it in its column.
-// matched/cleared tiles act as barriers (gaps below them are unreachable).
-function hasFloating(){
-  for(let c=0;c<cols;c++){
-    let foundNull = false;
-    for(let r=rows-1;r>=0;r--){
-      if(!grid[c][r]) foundNull = true;
-      else if(isLocked(grid[c][r])) foundNull = false;
-      else if(foundNull) return true;
-    }
-  }
-  return false;
-}
-
-// ===================== RISE =====================
-function getRiseSpeed(){
-  return RISE_BASE_SPEED + Math.min(riseSpeedLevel, MAX_RISE_LEVEL) * RISE_INCREMENT;
-}
-
-function handleRise(dt){
-  let speed = manualRaise ? TILE_SIZE / (MS.MANUAL_RAISE / 1000) : getRiseSpeed();
-  riseProgress += speed * dt;
-  if(riseProgress >= TILE_SIZE){
-    for(let c=0;c<cols;c++){
-      for(let r=0;r<rows-1;r++) grid[c][r] = grid[c][r+1];
-      grid[c][rows-1] = nextRow[c];
-      nextRow[c] = makeTile(Math.floor(Math.random()*COLORS.length));
-    }
-    riseProgress -= TILE_SIZE;
-    manualRaise = false;            // fast-raise complete
-    for(let c=0;c<cols;c++){
-      if(grid[c][0]){ state='gameover'; showGameOver(); return; }
-    }
-    needsMatchCheck = true;
-    if(cursorRow > 0) cursorRow--;  // keep cursor on the same visual row
-  }
-}
-
-// ===================== EXPANSION =====================
-function checkExpansion(){
-  for(let i=THRESHOLDS.length-1;i>=0;i--){
-    if(score>=THRESHOLDS[i].score && i>currentThresholdIdx){
-      expandGrid(THRESHOLDS[i].cols, THRESHOLDS[i].rows);
-      currentThresholdIdx=i;
-      expandMsgTimer=2.0;
-      expandAnimT=0.0001;
+    case 'square': {
+      const q = s * 0.85;
+      ctx.fillRect(cx - q, cy - q, q * 2, q * 2);
       break;
     }
   }
 }
 
-function expandGrid(newCols,newRows){
-  let oldCols=cols, leftAdd=Math.floor((newCols-oldCols)/2);
+// boot
+newGame();
+requestAnimationFrame(loop);
 
-  let ng=[];
-  for(let c=0;c<newCols;c++) ng.push(new Array(newRows).fill(null));
-  for(let c=0;c<oldCols;c++)
-    for(let r=0;r<rows;r++)
-      if(grid[c][r]) ng[c+leftAdd][r]=grid[c][r];
-
-  grid=ng; cols=newCols; rows=newRows;
-
-  cursorCol+=leftAdd;
-  if(cursorCol>cols-2) cursorCol=cols-2;
-  if(cursorCol<0) cursorCol=0;
-  if(cursorRow>rows-1) cursorRow=rows-1;
-  cursorFromCol=cursorCol; cursorFromRow=cursorRow;
-
-  let nr=new Array(newCols).fill(null);
-  for(let c=0;c<oldCols;c++) nr[c+leftAdd]=nextRow[c];
-  for(let c=0;c<newCols;c++)
-    if(!nr[c]) nr[c]=makeTile(Math.floor(Math.random()*COLORS.length));
-  nextRow=nr;
-
-  let oldTileSize = TILE_SIZE;
-  resizeCanvas();
-  let tscale = TILE_SIZE / oldTileSize;
-  if(tscale !== 1){
-    for(let c=0;c<cols;c++)
-      for(let r=0;r<rows;r++)
-        if(grid[c][r] && grid[c][r].vy) grid[c][r].vy *= tscale;
-    riseProgress *= tscale;
-  }
-}
-
-// ===================== GAME OVER =====================
-function showGameOver(){
-  document.getElementById('overlay').classList.remove('hidden');
-  document.getElementById('finalScore').textContent=score;
-}
-
-// ===================== UPDATE =====================
-function update(dt, dtMs){
-  updateInput(dtMs);
-  if(raiseLockMs > 0) raiseLockMs -= dtMs;
-  if(expandMsgTimer>0) expandMsgTimer-=dt;
-  if(chainMsgTimer>0)  chainMsgTimer-=dt;
-  if(expandAnimT>0 && expandAnimT<1) expandAnimT=Math.min(1,expandAnimT+dt*3);
-  if(scoreFlash>0) scoreFlash=Math.max(0,scoreFlash-dt*4);
-
-  // swap + fall animations run in every active state (so tiles never
-  // freeze mid-fall when the state machine transitions, e.g. a falling
-  // tile that triggers a match still animates while clearing proceeds)
-  updateSwap(dtMs);
-  updateFallAnimations(dt);
-
-  // a completed swap (or a rise shift) may have queued a match check
-  if(needsMatchCheck){
-    needsMatchCheck = false;
-    let res = findMatches();
-    if(res.count >= 3){ beginMatch(res); }
-    else if(state === 'playing' && hasFloating()){ applyGravity(); state='falling'; }
-  }
-
-  // speed level scales with score — unless the Lock Speed option is engaged,
-  // in which case it stays frozen at the level captured when locking
-  if(!speedLocked){
-    riseSpeedLevel = Math.floor(score/RISE_LEVEL_STEP);
-  } else {
-    riseSpeedLevel = speedLockLevel;
-  }
-
-  if(state === 'playing'){
-    handleRise(dt);
-  } else if(state === 'chainfreeze'){
-    phaseTimer -= dtMs;
-    if(phaseTimer <= 0) enterMatchLifecycle();
-  } else if(state === 'matchdelay' || state === 'flash' ||
-            state === 'wince' || state === 'popping'){
-    updateMatchLifecycle(dtMs);
-    // free tiles with unblocked gaps below them fall concurrently while
-    // other tiles are still clearing — gravity here respects matched/cleared
-    // tiles as immovable pillars, so only genuinely free tiles move
-    if(hasFloating()) applyGravity();
-  } else if(state === 'hover'){
-    phaseTimer += dtMs;
-    if(phaseTimer >= hoverDelayMs()){ applyGravity(); state='falling'; }
-  } else if(state === 'falling'){
-    if(allSettled()){
-      let res = findMatches();
-      if(res.count >= 3){ currentChain++; beginMatch(res); }  // gravity chain
-      else { currentChain = 1; state = 'playing'; }            // queue emptied
-    }
-  }
-
-  checkExpansion();
-  // safety: cancel any pending fast-raise outside of playing
-  if(state !== 'playing') manualRaise = false;
-}
-
-// ===================== RENDERING =====================
-function render(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  // ---- grid region (translated for vertical centering) ----
-  ctx.save();
-  ctx.translate(0, gridOffsetY);
-
-  // danger zone (top 2 rows)
-  let danger=false;
-  for(let c=0;c<cols;c++){
-    if(grid[c][1]){danger=true;break;}
-  }
-  if(danger){
-    let pulse=0.06+Math.sin(performance.now()/250)*0.04;
-    ctx.fillStyle='rgba(255,30,30,'+pulse+')';
-    ctx.fillRect(0,0,cols*TILE_SIZE,TILE_SIZE*2);
-  }
-
-  // grid lines
-  ctx.strokeStyle='rgba(255,255,255,0.035)';
-  ctx.lineWidth=1;
-  for(let c=0;c<=cols;c++){
-    ctx.beginPath(); ctx.moveTo(c*TILE_SIZE,0);
-    ctx.lineTo(c*TILE_SIZE,rows*TILE_SIZE); ctx.stroke();
-  }
-  for(let r=0;r<=rows;r++){
-    ctx.beginPath(); ctx.moveTo(0,r*TILE_SIZE);
-    ctx.lineTo(cols*TILE_SIZE,r*TILE_SIZE); ctx.stroke();
-  }
-
-  // tiles
-  for(let c=0;c<cols;c++)
-    for(let r=0;r<rows;r++)
-      if(grid[c][r]){
-        let x=c*TILE_SIZE + grid[c][r].sx;
-        let y=r*TILE_SIZE - riseProgress - grid[c][r].vy;
-        drawTile(grid[c][r],x,y);
-      }
-
-  // nextRow (incoming row rising from bottom) – held at constant very dim
-  // opacity for the ENTIRE rise, then snaps to full brightness the instant
-  // it is shifted onto the grid (rendered as a normal tile above). No
-  // gradual transition whatsoever.
-  ctx.save();
-  ctx.globalAlpha = OFFBOARD_ROW_ALPHA;
-  for(let c=0;c<cols;c++)
-    if(nextRow[c]){
-      let x=c*TILE_SIZE;
-      let y=rows*TILE_SIZE-riseProgress;
-      drawTile(nextRow[c],x,y);
-    }
-  ctx.restore();
-
-  ctx.restore(); // end grid translate
-
-  // expansion flash (full canvas, not translated)
-  if(expandAnimT>0 && expandAnimT<1){
-    ctx.fillStyle='rgba(100,200,255,'+(1-expandAnimT)*0.3+')';
-    ctx.fillRect(0,0,canvas.width,canvas.height);
-  }
-
-  // cursor (translated)
-  if(state!=='gameover'){
-    ctx.save();
-    ctx.translate(0, gridOffsetY);
-    drawCursor();
-    ctx.restore();
-  }
-
-  // chain message (on canvas)
-  if(chainMsgTimer>0 && currentChain>=2){
-    let a=Math.min(1,chainMsgTimer);
-    ctx.save();
-    ctx.font='bold 30px "Courier New",monospace';
-    ctx.textAlign='center';
-    ctx.textBaseline='top';
-    ctx.fillStyle='rgba(0,0,0,'+a*0.6+')';
-    ctx.fillText('CHAIN x'+currentChain+'!',canvas.width/2+2,gridOffsetY+12);
-    ctx.fillStyle='rgba(255,220,50,'+a+')';
-    ctx.fillText('CHAIN x'+currentChain+'!',canvas.width/2,gridOffsetY+10);
-    ctx.restore();
-  }
-
-  // expand message (on canvas)
-  if(expandMsgTimer>0){
-    let a=1;
-    if(expandMsgTimer>1.7) a=(2.0-expandMsgTimer)/0.3;
-    if(expandMsgTimer<0.4) a=expandMsgTimer/0.4;
-    a=Math.max(0,Math.min(1,a));
-    let mw=230, mh=46;
-    let mx=(canvas.width-mw)/2, my=gridOffsetY+canvas.height*0.28;
-    ctx.save();
-    ctx.fillStyle='rgba(255,215,0,'+a*0.92+')';
-    ctx.beginPath(); ctx.roundRect(mx,my,mw,mh,10); ctx.fill();
-    ctx.fillStyle='rgba(0,0,0,'+a+')';
-    ctx.font='bold 20px "Courier New",monospace';
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText('Grid Expanded!',canvas.width/2,my+mh/2);
-    ctx.restore();
-  }
-}
-
-// Draws a symbol centred at (cx,cy) sized to occupy ~90% of the tile.
-// fillColor = the slightly-different shade; strokeColor = subtle outline.
-function drawSymbol(type, cx, cy, size, fillColor, strokeColor){
-  let r = size * 0.45;   // outer radius (diameter = 90% of tile)
-  let lw = Math.max(1, size * 0.025);
-  ctx.fillStyle = fillColor;
-  ctx.strokeStyle = strokeColor;
-  ctx.lineWidth = lw;
-
-  if(type === 'circle'){
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.85, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
-  } else if(type === 'square'){
-    let half = r * 0.68;   // slightly smaller than other symbols
-    let rad = Math.max(2, size * 0.07);
-    ctx.beginPath();
-    ctx.roundRect(cx - half, cy - half, half * 2, half * 2, rad);
-    ctx.fill(); ctx.stroke();
-  } else if(type === 'diamond'){
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - r);
-    ctx.lineTo(cx + r * 0.9, cy);
-    ctx.lineTo(cx, cy + r);
-    ctx.lineTo(cx - r * 0.9, cy);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-  } else if(type === 'triangle'){
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - r * 0.9);
-    ctx.lineTo(cx + r * 0.85, cy + r * 0.55);
-    ctx.lineTo(cx - r * 0.85, cy + r * 0.55);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-  } else if(type === 'star'){
-    ctx.beginPath();
-    let outerR = r * 0.95;
-    let innerR = outerR * 0.42;
-    for(let i = 0; i < 10; i++){
-      let a = -Math.PI / 2 + i * Math.PI / 5;
-      let rr = (i % 2 === 0) ? outerR : innerR;
-      let px = cx + Math.cos(a) * rr;
-      let py = cy + Math.sin(a) * rr;
-      if(i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-  } else if(type === 'heart'){
-    ctx.beginPath();
-    ctx.moveTo(cx, cy + r * 0.75);
-    ctx.bezierCurveTo(cx + r * 1.15, cy + r * 0.15, cx + r * 0.95, cy - r * 0.7, cx + r * 0.4, cy - r * 0.35);
-    ctx.bezierCurveTo(cx + r * 0.2, cy - r * 0.2, cx, cy - r * 0.15, cx, cy - r * 0.1);
-    ctx.bezierCurveTo(cx, cy - r * 0.15, cx - r * 0.2, cy - r * 0.2, cx - r * 0.4, cy - r * 0.35);
-    ctx.bezierCurveTo(cx - r * 0.95, cy - r * 0.7, cx - r * 1.15, cy + r * 0.15, cx, cy + r * 0.75);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-  }
-}
-
-function drawTile(tile,x,y){
-  if(tile.cleared) return; // ghost tile — invisible but blocks space
-  let col=COLORS[tile.color];
-  let s=TILE_SIZE, p=Math.max(2,Math.round(s*0.075));
-  let rad=Math.max(3,Math.round(s*0.15));
-  let m=col.main, l=col.light;
-
-  // match-lifecycle rendering driven by absolute phase state
-  if(tile.matched && state==='flash'){ m='#ffffff'; l='#ffffff'; }
-  else if(tile.matched && state==='wince'){ m=col.dark; l=col.main; }
-
-  let g=ctx.createLinearGradient(x,y,x,y+s);
-  g.addColorStop(0,l); g.addColorStop(0.55,m); g.addColorStop(1,col.dark);
-  ctx.fillStyle=g;
-  ctx.beginPath(); ctx.roundRect(x+p,y+p,s-p*2,s-p*2,rad); ctx.fill();
-
-  // glossy top
-  ctx.fillStyle='rgba(255,255,255,0.18)';
-  ctx.beginPath(); ctx.roundRect(x+p+2,y+p+2,s-p*2-4,(s-p*2)/2.8,Math.max(2,rad*0.6)); ctx.fill();
-
-  // border
-  ctx.strokeStyle='rgba(0,0,0,0.35)';
-  ctx.lineWidth=1;
-  ctx.beginPath(); ctx.roundRect(x+p,y+p,s-p*2,s-p*2,rad); ctx.stroke();
-
-  // symbol (90% of block, slightly different shade of the block colour)
-  let symFill = col.light;
-  let symStroke = 'rgba(0,0,0,0.25)';
-  if(tile.matched && state==='flash'){ symFill='#ffffff'; symStroke='#ffffff'; }
-  else if(tile.matched && state==='wince'){ symFill=col.main; symStroke=col.dark; }
-  drawSymbol(col.symbol, x+s/2, y+s/2, s, symFill, symStroke);
-}
-
-function drawCursor(){
-  let p = Math.min(1, cursorShiftMs / MS.CURSOR_SHIFT);
-  let vc = cursorFromCol + (cursorCol - cursorFromCol) * p;
-  let vr = cursorFromRow + (cursorRow - cursorFromRow) * p;
-  let x=vc*TILE_SIZE;
-  let y=vr*TILE_SIZE-riseProgress;
-  let w=TILE_SIZE*2, h=TILE_SIZE;
-  let rad=Math.max(3,Math.round(TILE_SIZE*0.125));
-
-  let pulse=Math.sin(performance.now()/180)*0.25+0.75;
-  ctx.strokeStyle='rgba(253,224,71,'+(pulse*0.35)+')';
-  ctx.lineWidth=7;
-  ctx.beginPath(); ctx.roundRect(x+1,y+1,w-2,h-2,rad); ctx.stroke();
-
-  ctx.strokeStyle='#fde047';
-  ctx.lineWidth=3;
-  ctx.beginPath(); ctx.roundRect(x+1,y+1,w-2,h-2,rad); ctx.stroke();
-}
-
-// ===================== HUD =====================
-function updateHUD(){
-  document.getElementById('score').textContent=score;
-  document.getElementById('chain').textContent = currentChain >= 2 ? currentChain : 0;
-  document.getElementById('speed').textContent=riseSpeedLevel+1;
-  document.getElementById('gridsize').textContent=cols+'\u00d7'+rows;
-}
-
-// ===================== MAIN LOOP =====================
-// Delta-time accumulator sourced from performance.now(). The rAF loop is
-// only a render trigger; all engine state advances by real elapsed ms.
-function loop(){
-  let now = performance.now();
-  if(!lastTime) lastTime = now;
-  let dt = (now - lastTime) / 1000;
-  lastTime = now;
-  if(dt > 0.1) dt = 0.1;           // clamp tab-switch spikes
-  let dtMs = dt * 1000;
-
-  if(state !== 'gameover') update(dt, dtMs);
-  render();
-  updateHUD();
-  requestAnimationFrame(loop);
-}
-
-// ===================== START =====================
-init();
+} // end DOM guard
 </script>
 </body>
 </html>
