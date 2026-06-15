@@ -36,6 +36,19 @@
   #stats .srow { display: flex; justify-content: space-between; }
   #stats .srow span:last-child { color: #f1fa8c; font-variant-numeric: tabular-nums; font-weight: 600; }
   #stats .sempty { color: #50536b; font-size: 11px; font-style: italic; }
+  #stats .cols { display: flex; gap: 14px; }
+  #stats .col { flex: 1; min-width: 0; }
+  #stats .col .sthead { margin-top: 0; }
+  #stats .col + .col .sthead { margin-top: 0; }
+  #best {
+    width: 168px; padding: 12px 16px; background: #141728; border: 1px solid #2a2f45;
+    border-radius: 6px; font-size: 13px; line-height: 1.7;
+  }
+  #best h2 { font-size: 13px; margin: 0 0 8px; color: #8be9fd; text-transform: uppercase; letter-spacing: 1px; }
+  #best .row { display: flex; justify-content: space-between; }
+  #best .lbl { color: #6b7390; }
+  #best .val { color: #50fa7b; font-variant-numeric: tabular-nums; font-weight: 600; }
+  #best .val.dash { color: #50536b; }
   #overlay {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; background: rgba(7,8,15,.82);
@@ -60,15 +73,15 @@
   <div id="sidebar">
     <div id="hud">
       <h1>INFINITE<br>PANEL DE PON</h1>
+    <div class="row"><span class="lbl">TIME</span><span class="val big" id="hTime">0:00</span></div>
     <div class="row"><span class="lbl">SCORE</span><span class="val big" id="hScore">0</span></div>
     <div class="row"><span class="lbl">SPEED</span><span class="val" id="hSpeed">1</span></div>
-    <div class="row"><span class="lbl">CHAIN</span><span class="val" id="hChain">-</span></div>
     <div class="row"><span class="lbl">LONGEST CHAIN</span><span class="val" id="hMaxChain">-</span></div>
     <div class="row"><span class="lbl">LARGEST COMBO</span><span class="val" id="hMaxCombo">-</span></div>
     <div class="row"><span class="lbl">BLOCKS CLEARED</span><span class="val" id="hCleared">0</span></div>
-    <div class="row"><span class="lbl">GRID</span><span class="val" id="hGrid">6&times;12</span></div>
+    <div class="row hidden" id="hWidthRow"><span class="lbl">WIDTH</span><span class="val" id="hWidth">6</span></div>
     <div class="ctrl">
-      Arrows: move &nbsp; Z/Space: swap<br>
+      Arrows/WASD: move &nbsp; Z/Space: swap<br>
       X/Shift: raise &nbsp; P: pause<br>
       Enter: restart &nbsp; R: new game
     </div>
@@ -76,6 +89,12 @@
     <div id="stats">
       <h2>stats</h2>
       <div id="statsBody"><div class="sempty">no chains or combos yet</div></div>
+    </div>
+    <div id="best">
+      <h2>best</h2>
+      <div class="row"><span class="lbl">SCORE</span><span class="val dash" id="bScore">-</span></div>
+      <div class="row"><span class="lbl">CHAIN</span><span class="val dash" id="bChain">-</span></div>
+      <div class="row"><span class="lbl">COMBO</span><span class="val dash" id="bCombo">-</span></div>
     </div>
   </div>
 </div>
@@ -138,6 +157,24 @@ let gameStarted = false;
 let lastInput = {};
 let acc = 0;                 // fixed-step accumulator
 let lastT = 0;
+let gameStartMs = 0;         // wall-clock ms when the current game started
+let gameElapsedMs = 0;       // accumulated play time (paused time excluded)
+
+// ---- high scores (persisted in localStorage) ----
+// localStorage is the right tool here: synchronous, survives reloads, no
+// server round-trip needed (unlike cookies, which are for HTTP headers).
+const HS_KEY = 'pdp_best_v1';
+function loadBest() {
+  try {
+    const raw = localStorage.getItem(HS_KEY);
+    if (raw) { const o = JSON.parse(raw); return { score: o.score|0, chain: o.chain|0, combo: o.combo|0 }; }
+  } catch (e) {}
+  return { score: 0, chain: 0, combo: 0 };
+}
+function saveBest(b) {
+  try { localStorage.setItem(HS_KEY, JSON.stringify(b)); } catch (e) {}
+}
+let best = loadBest();       // { score, chain, combo } — personal records across runs
 
 // Classic Easy is the only game mode. Game ends when blocks reach the top.
 const PRESET = CLASSIC_ENDLESS_PRESETS['classic-easy'];
@@ -152,6 +189,8 @@ function newGame() {
   stack.input_state = {};
   gameStarted = true; paused = false;
   acc = 0; lastT = 0;
+  gameStartMs = performance.now();
+  gameElapsedMs = 0;
   expansionFx = null;            // cancel any in-progress expansion transition
   // size the canvas to the starting column count
   canvas.width = TILE * BASE_COLS;
@@ -219,7 +258,11 @@ const KEYS = {
 let swapKeyDown = false;   // is the swap key physically down right now?
 let swapEdge = false;      // edge flag: set on key-down, cleared when consumed
 window.addEventListener('keydown', e => {
-  if (e.code === 'KeyP') { paused = !paused; (paused?showOverlay:hideOverlay)('PAUSED'); e.preventDefault(); return; }
+  if (e.code === 'KeyP') {
+    if (!paused) { gameElapsedMs += performance.now() - gameStartMs; }   // freezing
+    else         { gameStartMs = performance.now(); }                    // resuming
+    paused = !paused; (paused?showOverlay:hideOverlay)('PAUSED'); e.preventDefault(); return;
+  }
   if (e.code === 'Enter') { newGame(); e.preventDefault(); return; }
   if (e.code === 'KeyR') { newGame(); e.preventDefault(); return; }
   const k = KEYS[e.code];
@@ -275,37 +318,75 @@ function stepInput() {
 }
 
 function onGameOver() {
+  gameElapsedMs += performance.now() - gameStartMs;   // freeze timer
+  gameStartMs = 0;
+  // Update + persist high scores
+  let beat = false;
+  if (stack.score > best.score) { best.score = stack.score; beat = true; }
+  if (stack.max_chain > best.chain) { best.chain = stack.max_chain; beat = true; }
+  if (stack.max_combo > best.combo) { best.combo = stack.max_combo; beat = true; }
+  if (beat) { saveBest(best); updateBest(); }
   showOverlay('GAME OVER', 'Score ' + stack.score, 'Press Enter or R to restart');
 }
 
 // ---- HUD ----
 function el(id){ return document.getElementById(id); }
+function fmtTime(ms) {
+  const s = Math.floor(ms / 1000);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+function currentElapsed() {
+  if (stack && stack.game_over) return gameElapsedMs;           // frozen
+  if (!gameStarted || paused) return gameElapsedMs;             // paused
+  return gameElapsedMs + (performance.now() - gameStartMs);     // running
+}
 function updateHUD() {
   if (!stack) return;
+  el('hTime').textContent = fmtTime(currentElapsed());
   el('hScore').textContent = stack.score;
   el('hSpeed').textContent = stack.speed;
-  el('hChain').textContent = stack.chain_counter > 0 ? 'x' + stack.chain_counter : '-';
   el('hMaxChain').textContent = stack.max_chain > 0 ? 'x' + stack.max_chain : '-';
   el('hMaxCombo').textContent = stack.max_combo > 0 ? stack.max_combo : '-';
   el('hCleared').textContent = stack.panels_cleared;
-  el('hGrid').textContent = stack.width + '\u00d7' + stack.height;
+  // Width row: hidden until the first board expansion (surprise mechanic)
+  if (stack.width > BASE_COLS) {
+    el('hWidthRow').classList.remove('hidden');
+    el('hWidth').textContent = stack.width;
+  }
   updateStats();
 }
 
 function updateStats() {
   const ct = stack.chain_tally, mt = stack.combo_tally;
-  let html = '';
-  const chainKeys = Object.keys(ct).map(Number).filter(k => ct[k] > 0).sort((a, b) => a - b);
-  if (chainKeys.length) {
-    html += '<div class="sthead">chains</div>';
-    for (const k of chainKeys) html += '<div class="srow"><span>' + k + 'x</span><span>' + ct[k] + '</span></div>';
+  function colRows(tally, suffix) {
+    const keys = Object.keys(tally).map(Number).filter(k => tally[k] > 0).sort((a, b) => a - b);
+    let h = '';
+    for (const k of keys) h += '<div class="srow"><span>' + (suffix ? k + suffix : k) + '</span><span>' + tally[k] + '</span></div>';
+    return h;
   }
-  const comboKeys = Object.keys(mt).map(Number).filter(k => mt[k] > 0).sort((a, b) => a - b);
-  if (comboKeys.length) {
-    html += '<div class="sthead">combos</div>';
-    for (const k of comboKeys) html += '<div class="srow"><span>' + k + '</span><span>' + mt[k] + '</span></div>';
+  const chainRows = colRows(ct, 'x');
+  const comboRows = colRows(mt);
+  if (!chainRows && !comboRows) {
+    el('statsBody').innerHTML = '<div class="sempty">no chains or combos yet</div>';
+    return;
   }
-  el('statsBody').innerHTML = html || '<div class="sempty">no chains or combos yet</div>';
+  let html = '<div class="cols">';
+  html += '<div class="col"><div class="sthead">chains</div>' + (chainRows || '<div class="sempty">&mdash;</div>') + '</div>';
+  html += '<div class="col"><div class="sthead">combos</div>' + (comboRows || '<div class="sempty">&mdash;</div>') + '</div>';
+  html += '</div>';
+  el('statsBody').innerHTML = html;
+}
+
+// ---- high score card ----
+function updateBest() {
+  function setVal(id, v, suffix) {
+    const e = el(id);
+    if (v > 0) { e.textContent = suffix ? suffix + v : v; e.classList.remove('dash'); }
+    else       { e.textContent = '-'; e.classList.add('dash'); }
+  }
+  setVal('bScore', best.score);
+  setVal('bChain', best.chain, 'x');
+  setVal('bCombo', best.combo);
 }
 function showOverlay(title, l1, l2) {
   el('ovTitle').textContent = title;
@@ -363,6 +444,10 @@ function render() {
   }
 
   ctx.restore();
+
+  // floating chain/combo cards — drawn in screen space (outside translate) so
+  // they're never clipped. Positioned relative to the board origin + rise offset.
+  drawCards(ox, oy, riseOff, gridH, tile);
 
   // loss-threshold bar: STATIC white line marking where game over triggers.
   // The topmost block's top edge reaches screen y = oy + TILE when new_row()
@@ -461,6 +546,56 @@ function drawLightningBolt(x, top, bottom, tile) {
     ctx.lineTo(x + (Math.random() - 0.5) * jitter * 1.6, by + (Math.random() - 0.3) * step * 1.5);
     ctx.stroke();
   }
+}
+
+// ---- floating chain/combo cards (PlayerStack.lua 489-518) ----
+// When a chain link or large combo matches, a numbered card spawns at the
+// match origin and floats upward over ~41 frames, fading to 50% opacity.
+// Chain cards show "×N" in gold; combo cards show "N" in cyan.
+function cardOpacity(frame) {
+  if (frame < 1) return 1;
+  return 1 - Math.min(0.5 * ((frame - 1) / 21), 0.5);
+}
+
+function drawCards(ox, oy, riseOff, gridH, tile) {
+  if (!stack.card_q || stack.card_q.length === 0) return;
+  const scale = tile / 16;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const card of stack.card_q) {
+    const animY = CARD_ANIM[card.frame];
+    if (animY === undefined || animY === null) continue;
+    const cx = ox + card.col * tile + tile / 2;
+    const cy = oy + riseOff + gridH - card.row * tile + tile / 2 - animY * scale;
+    const opacity = cardOpacity(card.frame);
+    const isChain = card.chain;
+    const fontSize = Math.round(tile * 0.52);
+
+    // glow + background square
+    ctx.shadowColor = isChain ? 'rgba(255,215,0,0.7)' : 'rgba(79,217,232,0.7)';
+    ctx.shadowBlur = tile * 0.35;
+    const half = tile * 0.38;
+    const rad = Math.max(2, Math.floor(tile * 0.12));
+    ctx.fillStyle = isChain
+      ? 'rgba(218,165,32,' + opacity.toFixed(3) + ')'
+      : 'rgba(30,140,200,' + opacity.toFixed(3) + ')';
+    roundRect(cx - half, cy - half, half * 2, half * 2, rad);
+    ctx.fill();
+    // inner border for definition
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,' + (opacity * 0.6).toFixed(3) + ')';
+    ctx.lineWidth = 2;
+    roundRect(cx - half, cy - half, half * 2, half * 2, rad);
+    ctx.stroke();
+
+    // number text
+    const label = isChain ? '\u00d7' + card.n : String(card.n);
+    ctx.font = 'bold ' + fontSize + 'px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,' + opacity.toFixed(3) + ')';
+    ctx.fillText(label, cx, cy + 1);
+  }
+  ctx.restore();
 }
 
 function drawPanel(p, x, y, tile) {
@@ -574,6 +709,7 @@ function drawSymbol(kind, x, y, w, h, color) {
 
 // boot
 newGame();
+updateBest();
 requestAnimationFrame(loop);
 
 } // end DOM guard

@@ -78,6 +78,15 @@ const SCORE_CHAIN_TA = [  0,   0,  50,  80, 150,   // index == chain_counter (2 
                         300, 400, 500, 700, 900,
                        1100,1300,1500,1800];        // index 13 = 1800
 
+// Card animation Y-offsets (PlayerStack.lua 460-465). 1-indexed like Lua:
+// card starts at frame 1, rises upward (offset grows), removed after frame 41.
+// Values are in 16px-tile units from the original; scaled by (tile/16) at draw.
+const CARD_ANIM = [null,  // index 0 unused (matches Lua's {false, ...})
+  -1,  0,  1,  2,  3,  4,  4,  5,  5,  6,
+   6,  7,  7,  8,  8,  8,  9,  9,  9,  9,
+   9, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+  10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11];
+
 // Mode flags for speed increase (LevelData.SPEED_INCREASE_MODES)
 const SPEED_TIME = 1;        // modern: every DT_SPEED_INCREASE frames
 const SPEED_PANEL_COUNT = 2; // classic: every N panels cleared
@@ -578,6 +587,7 @@ class Stack {
     this.chain_tally = {};
     this.combo_tally = {};
     this.panels_cleared = 0;
+    this.card_q = [];               // floating chain/combo cards (visual indicator)
 
     this.n_active_panels = 0;
     this.n_prev_active_panels = 0;
@@ -753,6 +763,7 @@ class Stack {
     }
 
     this.checkMatches();
+    this.updateCards();
     this.updatePanels();
     this.updateActivePanelCount();
 
@@ -984,12 +995,32 @@ class Stack {
       this.manual_raise = false;
       this.rise_lock = true;
       this._applyMatchToPanels(matching, isChain, comboSize);
+      // Enqueue floating chain/combo cards at the first popped panel's position
+      // (PlayerStack.lua 426-437). matching[0] is the pop origin after sort.
+      const origin = matching[0];
+      if (comboSize > 3 && isChain) {
+        this.card_q.push({ chain: false, row: origin.row, col: origin.column, n: comboSize, frame: 1 });
+        this.card_q.push({ chain: true,  row: origin.row + 1, col: origin.column, n: this.chain_counter, frame: 1 });
+      } else if (comboSize > 3) {
+        this.card_q.push({ chain: false, row: origin.row, col: origin.column, n: comboSize, frame: 1 });
+      } else if (isChain) {
+        this.card_q.push({ chain: true,  row: origin.row, col: origin.column, n: this.chain_counter, frame: 1 });
+      }
       const preStop = this.frameTimes.FLASH + this.frameTimes.FACE + this.frameTimes.POP * comboSize;
       this.pre_stop_time = Math.max(this.pre_stop_time, preStop);
       this._awardStopTime(isChain, comboSize);
       this._updateScoreWithBonus(comboSize);
     }
     this._clearChainingFlags();
+  }
+  // Advance all chain/combo card animations by one frame; remove finished ones.
+  // (PlayerStack.lua 467-487) Cards last CARD_ANIM.length-1 frames (~0.68s).
+  updateCards() {
+    for (let i = this.card_q.length - 1; i >= 0; i--) {
+      const card = this.card_q[i];
+      card.frame++;
+      if (CARD_ANIM[card.frame] === undefined) this.card_q.splice(i, 1);
+    }
   }
   // 73-81
   // 405-411
@@ -1136,6 +1167,7 @@ const ENGINE = {
   Panel, Stack, bound, getPanelBelow, supportedFromBelow, fall, land,
   riseTimeForSpeed, panelsForSpeed, generateRow, mulberry32,
   SPEED_TO_RISE_TIME_RAW, PANELS_TO_NEXT_SPEED, SCORE_COMBO_TA, SCORE_CHAIN_TA,
+  CARD_ANIM,
   DT_SPEED_INCREASE, DEFAULT_INPUT_REPEAT_DELAY, SCORE_CAP,
   SPEED_TIME, SPEED_PANEL_COUNT, STOP_MODERN, STOP_CLASSIC,
   MODERN_PRESETS, CLASSIC_ENDLESS_PRESETS, makePreset,
