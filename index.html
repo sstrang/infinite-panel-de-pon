@@ -291,7 +291,7 @@ function loop(ts) {
   if (!lastT) lastT = ts;
   let dt = ts - lastT; lastT = ts;
   if (dt > 250) dt = 250;            // avoid spiral after tab-switch
-  if (!gameStarted || paused || !stack) { render(); return; }
+  if (!gameStarted || paused || !stack || stack.game_over) { render(); return; }
 
   acc += dt;
   const STEP = 1000 / 60;
@@ -318,6 +318,7 @@ function stepInput() {
 }
 
 function onGameOver() {
+  if (gameStartMs === 0) return;                            // already frozen — idempotent
   gameElapsedMs += performance.now() - gameStartMs;   // freeze timer
   gameStartMs = 0;
   // Update + persist high scores
