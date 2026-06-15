@@ -420,6 +420,19 @@ function render() {
   ctx.fillStyle = '#0b0d18';
   ctx.fillRect(0, -tile, gridW, gridH + tile * 2);
 
+  // danger wobble: when the highest block is within one block of the loss
+  // threshold, all play-area panels shake horizontally. Each panel gets its
+  // own frequency and phase (derived from its grid position) so they wobble
+  // individually rather than in lockstep. Suppressed during match/chain
+  // resolution by shouldDangerWobble().
+  const wobbling = stack.shouldDangerWobble();
+  function wobbleX(row, col) {
+    if (!wobbling) return 0;
+    const freq = 0.32 + col * 0.025 + row * 0.015; // slow, gentle per-panel spread
+    const phase = row * 1.7 + col * 2.3;            // desynced start position
+    return Math.round(Math.sin(stack.clock * freq + phase) * (tile * 0.05));
+  }
+
   // draw panels row 1..height (+ any overflow rows)
   const maxRow = stack.panels.length - 1;
   for (let r = 1; r <= maxRow; r++) {
@@ -427,7 +440,7 @@ function render() {
       const p = stack.panels[r][c];
       if (p.color === 0) continue;
       // y grows downward; row 1 is the bottom. y = gridH - r*tile
-      const x = c * tile;
+      const x = c * tile + wobbleX(r, c);
       const y = gridH - r * tile;
       drawPanel(p, x, y, tile);
     }

@@ -787,6 +787,22 @@ class Stack {
     return false;
   }
 
+  // Danger wobble (Tetris Attack / Panel de Pon): when a panel sits within one
+  // block of the loss threshold (rows height-1 or height), all blocks should
+  // shake to warn the player. Suppressed during match/chain resolution and game
+  // over so the board stays steady while clears animate.
+  shouldDangerWobble() {
+    if (this.game_over) return false;
+    if (this.chain_counter !== 0) return false;              // chain in progress
+    if (this.stop_time > 0 || this.pre_stop_time > 0) return false;  // any match resolving (covers basic 3-matches too)
+    for (let row = this.height - 1; row <= this.height; row++) {
+      for (let col = 0; col < this.width; col++) {
+        if (this.panels[row][col].dangerous()) return true;
+      }
+    }
+    return false;
+  }
+
   // Stack.lua 1607-1623
   updateRiseLock() {
     const prev = this.rise_lock;
