@@ -1,3 +1,13 @@
+/* ======================================================================
+   INFINITE PANEL DE PON
+   Copyright (c) 2026 sstrang — MIT License (see LICENSE)
+
+   The game engine is ported from the Lua source of panel-attack:
+     https://github.com/panel-attack/panel-game
+   All game logic is derived from that project's Lua codebase
+   (Panel.lua, Stack.lua, checkMatches.lua, consts.lua,
+   LevelPresets.lua, PanelGenerator.lua, GeneratorSource.lua).
+   ====================================================================== */
 "use strict";
 /* ======================================================================
    INFINITE PANEL DE PON
